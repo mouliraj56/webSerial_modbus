@@ -2,7 +2,7 @@
 
 A free, browser-based tool for communicating with Modbus RTU devices. No installation required — just plug in your USB-RS485 adapter and start reading/writing registers.
 
-**[▶️ Launch Application](index.html)**
+**[▶️ Launch Application](https://mouliraj56.github.io/webSerial_modbus/)**
 
 ---
 
