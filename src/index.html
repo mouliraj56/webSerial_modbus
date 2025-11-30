@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modbus RTU Master Emulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="dark">
+    <!-- Browser Compatibility Warning -->
+    <div id="browser-warning" class="browser-warning" style="display: none;">
+        <span class="browser-warning__icon">⚠️</span>
+        <span>Your browser does not support Web Serial API. Please use Chrome, Edge, or Opera.</span>
+        <button class="browser-warning__close" onclick="this.parentElement.style.display='none'">&times;</button>
+    </div>
+
+    <div class="app-container">
+        <!-- Top Toolbar -->
+        <header class="toolbar">
+            <div class="toolbar__left">
+                <button class="btn btn--primary" id="btnNewConnection" title="New Connection (Ctrl+N)">
+                    <span class="btn__icon">🔗</span> New Connection
+                </button>
+                <button class="btn btn--secondary" id="btnNewSlave" title="New Slave" disabled>
+                    <span class="btn__icon">📝</span> New Slave
+                </button>
+                <div class="toolbar__divider"></div>
+                <button class="btn btn--success" id="btnOpenConnection" title="Open Connection (Ctrl+O)" disabled>
+                    <span class="btn__icon">🟢</span> Open
+                </button>
+                <button class="btn btn--danger" id="btnCloseConnection" title="Close Connection" disabled>
+                    <span class="btn__icon">🔴</span> Close
+                </button>
+                <div class="toolbar__divider"></div>
+                <button class="btn btn--secondary" id="btnEditConnection" title="Edit Connection" disabled>
+                    <span class="btn__icon">⚙️</span> Edit Connection
+                </button>
+                <button class="btn btn--secondary" id="btnEditSlave" title="Edit Slave" disabled>
+                    <span class="btn__icon">✏️</span> Edit Slave
+                </button>
+            </div>
+            <div class="toolbar__right">
+                <label class="toolbar__label">
+                    Baud Rate:
+                    <select id="selectBaudRate" class="toolbar__select">
+                        <option value="9600">9600</option>
+                        <option value="19200">19200</option>
+                        <option value="38400">38400</option>
+                        <option value="57600">57600</option>
+                        <option value="115200">115200</option>
+                    </select>
+                </label>
+                <label class="toolbar__label">
+                    Parity:
+                    <select id="selectParity" class="toolbar__select">
+                        <option value="none">None</option>
+                        <option value="even">Even</option>
+                        <option value="odd">Odd</option>
+                    </select>
+                </label>
+                <div class="toolbar__divider"></div>
+                <div class="connection-status connection-status--disconnected" id="connectionStatus">
+                    <span class="connection-status__dot"></span>
+                    <span class="connection-status__text">Disconnected</span>
+                </div>
+                <button class="btn btn--icon" id="btnDarkMode" title="Toggle Dark Mode">
+                    <span>☀️</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Left Sidebar - Device Tree -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar__header">
+                    <h2 class="sidebar__title">Devices</h2>
+                </div>
+                <div class="sidebar__content">
+                    <div class="device-tree" id="deviceTree">
+                        <div class="device-tree__empty">
+                            <p>No connections configured.</p>
+                            <p>Click "New Connection" to start.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="sidebar__footer">
+                    <button class="btn btn--block btn--primary" id="btnAddConnectionSidebar">
+                        <span class="btn__icon">➕</span> Add New Connection
+                    </button>
+                </div>
+                <div class="sidebar__resizer" id="sidebarResizer"></div>
+            </aside>
+
+            <!-- Center Panel - Register Table -->
+            <section class="main-panel">
+                <!-- Action Bar -->
+                <div class="action-bar">
+                    <div class="action-bar__left">
+                        <button class="btn btn--secondary" id="btnTrafficLog" title="Toggle Traffic Log">
+                            <span class="btn__icon">📊</span> Traffic Log
+                        </button>
+                        <button class="btn btn--secondary" id="btnRefreshRegisters" title="Refresh Registers (Ctrl+R)" disabled>
+                            <span class="btn__icon">♻️</span> Refresh
+                        </button>
+                        <button class="btn btn--secondary" id="btnResetRegisters" title="Reset Registers" disabled>
+                            <span class="btn__icon">🔄</span> Reset
+                        </button>
+                        <button class="btn btn--secondary" id="btnResetColors" title="Reset Colors" disabled>
+                            <span class="btn__icon">🎨</span> Reset Colors
+                        </button>
+                        <button class="btn btn--secondary" id="btnStopPolling" title="Stop Auto-Polling" disabled>
+                            <span class="btn__icon">⏸️</span> Stop Polling
+                        </button>
+                    </div>
+                    <div class="action-bar__right">
+                        <div class="function-tabs" id="functionTabs" style="display: none;">
+                            <button class="function-tab" data-fc="05" title="Write Single Coil">05</button>
+                            <button class="function-tab" data-fc="06" title="Write Single Register">06</button>
+                            <button class="function-tab" data-fc="15" title="Write Multiple Coils">15</button>
+                            <button class="function-tab" data-fc="16" title="Write Multiple Registers">16</button>
+                            <button class="function-tab function-tab--test" data-fc="TC" title="Test Connection (Ctrl+T)">TC</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Register Table -->
+                <div class="register-table-container" id="registerTableContainer">
+                    <div class="register-table__empty" id="registerTableEmpty">
+                        <div class="register-table__empty-icon">📋</div>
+                        <h3>No Registers to Display</h3>
+                        <p>Select a register group from the device tree to view registers.</p>
+                    </div>
+                    <table class="register-table" id="registerTable" style="display: none;">
+                        <thead>
+                            <tr>
+                                <th class="register-table__th register-table__th--type">Type</th>
+                                <th class="register-table__th register-table__th--address">Address</th>
+                                <th class="register-table__th register-table__th--alias">Alias</th>
+                                <th class="register-table__th register-table__th--value">Value</th>
+                                <th class="register-table__th register-table__th--comment">Comment</th>
+                            </tr>
+                        </thead>
+                        <tbody id="registerTableBody">
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Value Editor Panel -->
+                <div class="value-editor" id="valueEditor">
+                    <div class="value-editor__header">
+                        <div class="value-editor__tabs">
+                            <button class="value-editor__tab value-editor__tab--active" data-tab="numeric">Unsigned-Signed-Hex-Binary</button>
+                            <button class="value-editor__tab" data-tab="long">Long</button>
+                            <button class="value-editor__tab" data-tab="float">Float</button>
+                            <button class="value-editor__tab" data-tab="double">Double</button>
+                            <button class="value-editor__tab" data-tab="string">String</button>
+                        </div>
+                        <button class="value-editor__toggle" id="valueEditorToggle" title="Collapse/Expand">▼</button>
+                    </div>
+                    <div class="value-editor__content" id="valueEditorContent">
+                        <!-- Numeric Tab -->
+                        <div class="value-editor__panel value-editor__panel--active" data-panel="numeric">
+                            <div class="value-editor__info">Select a register to view/edit its value</div>
+                            <div class="value-editor__grid" style="display: none;">
+                                <div class="value-editor__row">
+                                    <label>Unsigned (16-bit):</label>
+                                    <input type="number" id="valueUnsigned" min="0" max="65535" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Signed (16-bit):</label>
+                                    <input type="number" id="valueSigned" min="-32768" max="32767" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Hexadecimal:</label>
+                                    <input type="text" id="valueHex" placeholder="0x0000" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Binary:</label>
+                                    <input type="text" id="valueBinary" placeholder="0000000000000000" class="value-editor__input value-editor__input--wide">
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Long Tab -->
+                        <div class="value-editor__panel" data-panel="long">
+                            <div class="value-editor__info">Select 2 consecutive registers to view as 32-bit Long</div>
+                            <div class="value-editor__grid" style="display: none;">
+                                <div class="value-editor__row">
+                                    <label>Long AB CD (Big-endian):</label>
+                                    <input type="number" id="valueLongABCD" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Long CD AB (Little-endian word):</label>
+                                    <input type="number" id="valueLongCDAB" class="value-editor__input">
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Float Tab -->
+                        <div class="value-editor__panel" data-panel="float">
+                            <div class="value-editor__info">Select 2 consecutive registers to view as 32-bit Float</div>
+                            <div class="value-editor__grid" style="display: none;">
+                                <div class="value-editor__row">
+                                    <label>Float AB CD:</label>
+                                    <input type="number" step="any" id="valueFloatABCD" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Float CD AB:</label>
+                                    <input type="number" step="any" id="valueFloatCDAB" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Float BA DC:</label>
+                                    <input type="number" step="any" id="valueFloatBADC" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Float DC BA:</label>
+                                    <input type="number" step="any" id="valueFloatDCBA" class="value-editor__input">
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Double Tab -->
+                        <div class="value-editor__panel" data-panel="double">
+                            <div class="value-editor__info">Select 4 consecutive registers to view as 64-bit Double</div>
+                            <div class="value-editor__grid" style="display: none;">
+                                <div class="value-editor__row">
+                                    <label>Double (Big-endian):</label>
+                                    <input type="number" step="any" id="valueDoubleBE" class="value-editor__input">
+                                </div>
+                                <div class="value-editor__row">
+                                    <label>Double (Little-endian):</label>
+                                    <input type="number" step="any" id="valueDoubleLE" class="value-editor__input">
+                                </div>
+                            </div>
+                        </div>
+                        <!-- String Tab -->
+                        <div class="value-editor__panel" data-panel="string">
+                            <div class="value-editor__info">Select registers to view as ASCII string</div>
+                            <div class="value-editor__grid" style="display: none;">
+                                <div class="value-editor__row value-editor__row--full">
+                                    <label>ASCII String:</label>
+                                    <input type="text" id="valueString" class="value-editor__input value-editor__input--wide">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Traffic Log Panel (Overlay) -->
+        <div class="traffic-log" id="trafficLog" style="display: none;">
+            <div class="traffic-log__header">
+                <h3 class="traffic-log__title">📊 Communication Traffic</h3>
+                <div class="traffic-log__actions">
+                    <button class="btn btn--small btn--secondary" id="btnClearLog">Clear</button>
+                    <button class="btn btn--small btn--secondary" id="btnPauseLog">Pause</button>
+                    <button class="btn btn--small btn--secondary" id="btnCopyLog">Copy</button>
+                    <button class="btn btn--small btn--icon" id="btnCloseLog">&times;</button>
+                </div>
+            </div>
+            <div class="traffic-log__content" id="trafficLogContent">
+                <div class="traffic-log__empty">No traffic logged yet.</div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <footer class="status-bar">
+            <div class="status-bar__item">
+                <span id="statusConnection">Disconnected</span>
+            </div>
+            <div class="status-bar__divider"></div>
+            <div class="status-bar__item">
+                <span>Slave: <span id="statusSlave">-</span></span>
+            </div>
+            <div class="status-bar__divider"></div>
+            <div class="status-bar__item">
+                <span>Last Poll: <span id="statusLastPoll">-</span></span>
+            </div>
+            <div class="status-bar__divider"></div>
+            <div class="status-bar__item">
+                <span>Errors: <span id="statusErrors">0</span></span>
+            </div>
+            <div class="status-bar__divider"></div>
+            <div class="status-bar__item">
+                <span>Messages: <span id="statusMessages">0</span></span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Modals -->
+    <!-- New Connection Modal -->
+    <div class="modal" id="modalNewConnection">
+        <div class="modal__overlay"></div>
+        <div class="modal__content">
+            <div class="modal__header">
+                <h3 class="modal__title">🔗 New Connection</h3>
+                <button class="modal__close" data-modal-close>&times;</button>
+            </div>
+            <div class="modal__body">
+                <p class="modal__info">Click the button below to select a serial port from your system.</p>
+                <div class="form-group">
+                    <label class="form-label">Baud Rate</label>
+                    <select id="modalBaudRate" class="form-select">
+                        <option value="9600" selected>9600</option>
+                        <option value="19200">19200</option>
+                        <option value="38400">38400</option>
+                        <option value="57600">57600</option>
+                        <option value="115200">115200</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Parity</label>
+                    <select id="modalParity" class="form-select">
+                        <option value="none" selected>None</option>
+                        <option value="even">Even</option>
+                        <option value="odd">Odd</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Data Bits</label>
+                    <select id="modalDataBits" class="form-select">
+                        <option value="8" selected>8</option>
+                        <option value="7">7</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Stop Bits</label>
+                    <select id="modalStopBits" class="form-select">
+                        <option value="1" selected>1</option>
+                        <option value="2">2</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--secondary" data-modal-close>Cancel</button>
+                <button class="btn btn--primary" id="btnSelectPort">Select Port</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Connection Modal -->
+    <div class="modal" id="modalEditConnection">
+        <div class="modal__overlay"></div>
+        <div class="modal__content">
+            <div class="modal__header">
+                <h3 class="modal__title">⚙️ Edit Connection</h3>
+                <button class="modal__close" data-modal-close>&times;</button>
+            </div>
+            <div class="modal__body">
+                <p class="modal__info">Modify connection settings. Changes will apply on next connect.</p>
+                <div class="form-group">
+                    <label class="form-label">Port</label>
+                    <input type="text" id="modalEditConnPort" class="form-input" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Baud Rate</label>
+                    <select id="modalEditConnBaudRate" class="form-select">
+                        <option value="9600">9600</option>
+                        <option value="19200">19200</option>
+                        <option value="38400">38400</option>
+                        <option value="57600">57600</option>
+                        <option value="115200">115200</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Parity</label>
+                    <select id="modalEditConnParity" class="form-select">
+                        <option value="none">None</option>
+                        <option value="even">Even</option>
+                        <option value="odd">Odd</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Data Bits</label>
+                    <select id="modalEditConnDataBits" class="form-select">
+                        <option value="8">8</option>
+                        <option value="7">7</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Stop Bits</label>
+                    <select id="modalEditConnStopBits" class="form-select">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--secondary" data-modal-close>Cancel</button>
+                <button class="btn btn--primary" id="btnUpdateConnection">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Slave Modal -->
+    <div class="modal" id="modalNewSlave">
+        <div class="modal__overlay"></div>
+        <div class="modal__content">
+            <div class="modal__header">
+                <h3 class="modal__title">📝 New Slave</h3>
+                <button class="modal__close" data-modal-close>&times;</button>
+            </div>
+            <div class="modal__body">
+                <div class="form-group">
+                    <label class="form-label">Slave ID (1-247)</label>
+                    <input type="number" id="modalSlaveId" class="form-input" min="1" max="247" value="1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Alias (optional)</label>
+                    <input type="text" id="modalSlaveAlias" class="form-input" placeholder="e.g., PLC-01">
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--secondary" data-modal-close>Cancel</button>
+                <button class="btn btn--primary" id="btnAddSlave">Add Slave</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Register Group Modal -->
+    <div class="modal" id="modalNewGroup">
+        <div class="modal__overlay"></div>
+        <div class="modal__content">
+            <div class="modal__header">
+                <h3 class="modal__title">📁 New Register Group</h3>
+                <button class="modal__close" data-modal-close>&times;</button>
+            </div>
+            <div class="modal__body">
+                <div class="form-group">
+                    <label class="form-label">Group Name</label>
+                    <input type="text" id="modalGroupName" class="form-input" placeholder="e.g., Process Data">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Polling Interval (ms)</label>
+                    <input type="number" id="modalPollingInterval" class="form-input" min="100" value="1000">
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--secondary" data-modal-close>Cancel</button>
+                <button class="btn btn--primary" id="btnAddGroup">Add Group</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Register Modal -->
+    <div class="modal" id="modalAddRegister">
+        <div class="modal__overlay"></div>
+        <div class="modal__content modal__content--wide">
+            <div class="modal__header">
+                <h3 class="modal__title">📄 Add Register</h3>
+                <button class="modal__close" data-modal-close>&times;</button>
+            </div>
+            <div class="modal__body">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Register Type</label>
+                        <select id="modalRegisterType" class="form-select">
+                            <option value="4x">4x Holding Register (FC03/06/16)</option>
+                            <option value="3x">3x Input Register (FC04)</option>
+                            <option value="0x">0x Coil (FC01/05/15)</option>
+                            <option value="1x">1x Discrete Input (FC02)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Address</label>
+                        <input type="text" id="modalRegisterAddress" class="form-input" placeholder="e.g., 40001 or 0x0000">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Alias (optional)</label>
+                        <input type="text" id="modalRegisterAlias" class="form-input" placeholder="e.g., Temperature">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Quantity</label>
+                        <input type="number" id="modalRegisterQuantity" class="form-input" min="1" max="125" value="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Comment (optional)</label>
+                    <input type="text" id="modalRegisterComment" class="form-input" placeholder="e.g., Process temperature sensor">
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--secondary" data-modal-close>Cancel</button>
+                <button class="btn btn--primary" id="btnAddRegister">Add Register</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Slave Modal -->
+    <div class="modal" id="modalEditSlave">
+        <div class="modal__overlay"></div>
+        <div class="modal__content">
+            <div class="modal__header">
+                <h3 class="modal__title">✏️ Edit Slave</h3>
+                <button class="modal__close" data-modal-close>&times;</button>
+            </div>
+            <div class="modal__body">
+                <div class="form-group">
+                    <label class="form-label">Slave ID (1-247)</label>
+                    <input type="number" id="modalEditSlaveId" class="form-input" min="1" max="247">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Alias (optional)</label>
+                    <input type="text" id="modalEditSlaveAlias" class="form-input">
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--secondary" data-modal-close>Cancel</button>
+                <button class="btn btn--primary" id="btnUpdateSlave">Update</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Group Modal -->
+    <div class="modal" id="modalEditGroup">
+        <div class="modal__overlay"></div>
+        <div class="modal__content">
+            <div class="modal__header">
+                <h3 class="modal__title">✏️ Edit Register Group</h3>
+                <button class="modal__close" data-modal-close>&times;</button>
+            </div>
+            <div class="modal__body">
+                <div class="form-group">
+                    <label class="form-label">Group Name</label>
+                    <input type="text" id="modalEditGroupName" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Polling Interval (ms)</label>
+                    <input type="number" id="modalEditPollingInterval" class="form-input" min="100">
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--secondary" data-modal-close>Cancel</button>
+                <button class="btn btn--primary" id="btnUpdateGroup">Update</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="contextMenu" style="display: none;">
+        <div class="context-menu__item" data-action="connect">🔗 Connect</div>
+        <div class="context-menu__item" data-action="disconnect">🔌 Disconnect</div>
+        <div class="context-menu__item" data-action="remove">🗑️ Remove</div>
+        <div class="context-menu__divider"></div>
+        <div class="context-menu__item" data-action="edit">✏️ Edit</div>
+        <div class="context-menu__item" data-action="delete">🗑️ Delete</div>
+        <div class="context-menu__divider"></div>
+        <div class="context-menu__item" data-action="newGroup">📁 New Register Group</div>
+        <div class="context-menu__item" data-action="addRegister">📄 Add Register</div>
+        <div class="context-menu__divider"></div>
+        <div class="context-menu__item" data-action="refresh">♻️ Refresh</div>
+        <div class="context-menu__item" data-action="startPolling">▶️ Start Auto-Poll</div>
+        <div class="context-menu__item" data-action="stopPolling">⏹️ Stop Auto-Poll</div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-spinner"></div>
+        <div class="loading-text" id="loadingText">Loading...</div>
+    </div>
+
+    <!-- Notification Container -->
+    <div class="notification-container" id="notificationContainer"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
