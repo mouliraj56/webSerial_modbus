@@ -16,7 +16,16 @@ A free, browser-based tool for communicating with Modbus RTU devices. No install
 - 🌙 **Dark mode** interface
 - 💾 **Saves your configuration** automatically in the browser
 
+
 ---
+
+## 🔗 Related Tools
+
+**[Modbus Data Converter](https://mouliraj56.github.io/modbus-data-converter/)** — A companion tool for converting between different Modbus data formats (integers, floats, hex, etc.)
+
+---
+
+
 
 ## 🖥️ Browser Requirements
 
@@ -153,6 +162,8 @@ Select one or more registers to view values in different formats:
 
 **Wrong values**
 → Try different byte order interpretations in the Value Editor
+
+
 
 ---
 
