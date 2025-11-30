@@ -1,139 +1,162 @@
-# Modbus RTU Master Emulator
+# 🔌 Modbus RTU Master Emulator
 
-A production-ready, browser-based Modbus RTU Master (Client) application that communicates with physical Modbus RTU devices through USB-RS485 adapters using the Web Serial API.
+A free, browser-based tool for communicating with Modbus RTU devices. No installation required — just plug in your USB-RS485 adapter and start reading/writing registers.
 
-## 🚀 How to Use
+**[▶️ Launch Application](index.html)**
 
-### Getting Started
+---
 
-1. **Open the Application**
-   - Open `src/index.html` in a supported browser (Chrome, Edge, or Opera)
-   - Or deploy to any static hosting (GitHub Pages, Netlify, etc.)
+## ✨ Features
 
-2. **Create a Connection**
-   - Click **"New Connection"** in the toolbar
-   - Configure serial settings (Baud Rate, Parity, Data Bits, Stop Bits)
-   - Click **"Select Port"** and choose your USB-RS485 adapter from the browser prompt
-   - The connection will open automatically
+- 🌐 **Runs entirely in your browser** — no software to install
+- 🔗 **Direct hardware access** via USB-RS485 adapters
+- 📊 **Read & write** coils, discrete inputs, input registers, and holding registers
+- 🔄 **Auto-polling** with configurable intervals
+- 📈 **Multiple data formats** — view values as integers, floats, hex, binary, or strings
+- 🌙 **Dark mode** interface
+- 💾 **Saves your configuration** automatically in the browser
 
-3. **Add a Slave Device**
-   - Select the connection in the device tree
-   - Click **"New Slave"** or right-click the connection
-   - Enter the Slave ID (1-247) and an optional alias
+---
 
-4. **Create Register Groups**
-   - Right-click on a slave and select **"New Group"**
-   - Enter a group name and polling interval (in milliseconds)
+## 🖥️ Browser Requirements
 
-5. **Add Registers**
-   - Right-click on a register group and select **"Add Register"**
-   - Choose register type:
-     - `0x` - Coils (read/write, FC 01/05)
-     - `1x` - Discrete Inputs (read-only, FC 02)
-     - `3x` - Input Registers (read-only, FC 04)
-     - `4x` - Holding Registers (read/write, FC 03/06)
-   - Enter the address (hex like `0x0000` or Modbus notation like `40001`)
-   - Specify quantity to add multiple consecutive registers
+This application uses the **Web Serial API**, which is only available in:
 
-6. **Read/Write Registers**
-   - Click on a register group to view its registers
-   - Click **"Refresh"** to read all registers in the group
-   - Double-click a writable register cell to edit its value
-   - Use the **Value Editor** panel to view different data interpretations
+| Browser | Supported |
+|---------|-----------|
+| Google Chrome 89+ | ✅ Yes |
+| Microsoft Edge 89+ | ✅ Yes |
+| Opera 75+ | ✅ Yes |
+| Firefox | ❌ No |
+| Safari | ❌ No |
+| Mobile browsers | ❌ No |
 
-### Keyboard Shortcuts
+---
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+N` | New Connection |
-| `Ctrl+O` | Open Connection |
-| `Ctrl+R` | Refresh Registers |
-| `Ctrl+T` | Test Connection |
-| `Esc` | Close modals/menus |
+## 🛠️ What You Need
 
-### Value Interpretation
+1. A **USB-RS485 adapter** (e.g., FTDI, CH340, CP2102)
+2. A **Modbus RTU slave device** to communicate with
+3. A supported browser (see above)
 
-Select registers in the table to view their values in different formats:
+---
 
-- **Numeric Tab**: Unsigned, Signed, Hex, Binary (single register)
-- **Long Tab**: 32-bit integer with byte order options (2 consecutive registers)
-- **Float Tab**: IEEE 754 float with byte order options (2 consecutive registers)
-- **Double Tab**: 64-bit double precision (4 consecutive registers)
-- **String Tab**: ASCII string interpretation (any number of registers)
+## 📖 Quick Start Guide
 
-### Auto-Polling
+### 1. Connect Your Hardware
+Plug your USB-RS485 adapter into your computer and connect it to your Modbus device.
 
-- Right-click a register group and select **"Start Polling"**
-- Registers will be read automatically at the configured interval
-- Click **"Stop Polling"** to disable
+### 2. Create a Connection
+- Click **"New Connection"**
+- Set your serial parameters (baud rate, parity, etc.)
+- Click **"Select Port"** and choose your adapter
 
-### Traffic Log
+### 3. Add Your Device
+- Click **"New Slave"**
+- Enter the device's Slave ID (1-247)
 
-- Click **"Traffic Log"** to view raw Modbus frames
-- TX (sent) and RX (received) frames are displayed in hex
-- Use **Copy** to export the log
+### 4. Add Registers
+- Right-click your slave → **"New Group"**
+- Right-click the group → **"Add Register"**
+- Choose the register type and address
+
+### 5. Read Data
+- Select your register group in the tree
+- Click **"Refresh"** to read values
+- Or enable **auto-polling** for continuous updates
+
+---
+
+## 📋 Supported Modbus Functions
+
+| Code | Function | Type |
+|------|----------|------|
+| 01 | Read Coils | `0x` |
+| 02 | Read Discrete Inputs | `1x` |
+| 03 | Read Holding Registers | `4x` |
+| 04 | Read Input Registers | `3x` |
+| 05 | Write Single Coil | `0x` |
+| 06 | Write Single Register | `4x` |
+| 15 | Write Multiple Coils | `0x` |
+| 16 | Write Multiple Registers | `4x` |
+
+---
+
+## 🔢 Data Interpretation
+
+Select one or more registers to view values in different formats:
+
+| Format | Registers Needed | Description |
+|--------|------------------|-------------|
+| Unsigned/Signed | 1 | 16-bit integer |
+| Hex/Binary | 1 | Raw representation |
+| Long (32-bit) | 2 | With byte order options |
+| Float (32-bit) | 2 | IEEE 754, multiple byte orders |
+| Double (64-bit) | 4 | Big/little endian |
+| String | Any | ASCII text |
+
+---
 
 ## ⚠️ Limitations
 
-### Browser Compatibility
+| Limitation | Details |
+|------------|---------|
+| **RTU only** | ASCII mode not supported |
+| **Master only** | Cannot emulate a slave device |
+| **Serial only** | No Modbus TCP/IP support |
+| **Max read** | 125 registers per request |
+| **Port re-selection** | Must re-select port after page refresh |
+| **Single port** | One app per serial port |
 
-- **Requires Web Serial API** - Only works in:
-  - Google Chrome 89+
-  - Microsoft Edge 89+
-  - Opera 75+
-- **Does NOT work in**: Firefox, Safari, mobile browsers
+---
 
-### Hardware Requirements
+## ⌨️ Keyboard Shortcuts
 
-- Requires a **USB-RS485 adapter** (FTDI, CH340, CP2102, etc.)
-- The adapter must be recognized by your operating system
-- Only one application can use a serial port at a time
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl + N` | New Connection |
+| `Ctrl + O` | Open Connection |
+| `Ctrl + R` | Refresh Registers |
+| `Ctrl + T` | Test Connection |
+| `Esc` | Close dialogs |
 
-### Protocol Limitations
+---
 
-- **RTU mode only** - ASCII mode is not supported
-- **Master/Client only** - Cannot act as a Modbus slave/server
-- **No TCP/IP** - Only serial RTU communication
-- Maximum 125 registers per read request (Modbus protocol limit)
-- Maximum 123 registers per write request
+## 🔒 Privacy & Security
 
-### Data Persistence
+- ✅ **No data leaves your browser** — everything runs locally
+- ✅ **No tracking or analytics**
+- ✅ **No server required** — works offline after loading
+- ✅ **Open source** — inspect the code yourself
 
-- Configuration is saved to **browser localStorage**
-- Data is browser and origin-specific (won't sync across devices)
-- Serial port permissions must be re-granted on each browser session
+---
 
-### Security
+## 💡 Tips
 
-- Web Serial API requires **HTTPS** or **localhost**
-- User must explicitly grant permission for each port
-- No authentication/encryption for Modbus communication (protocol limitation)
+- **Test Connection**: Use the `TC` button to verify your device responds
+- **Traffic Log**: Click "Traffic Log" to see raw Modbus frames for debugging
+- **Byte Order**: Industrial devices vary — try different byte orders (ABCD, CDAB, etc.) for float values
+- **Address Formats**: Enter addresses as `40001` or `0x0000` — both work
 
-### Known Issues
+---
 
-- Serial port objects cannot be persisted; you must re-select the port after page refresh
-- Some USB-RS485 adapters may have driver compatibility issues
-- Response timeout is fixed at 2 seconds
+## 🐛 Troubleshooting
 
-## 📁 Project Structure
+**"No port selected"**
+→ Make sure your USB adapter is plugged in and drivers are installed
 
-```
-webSerial_modbus/
-├── README.md
-└── src/
-    ├── index.html    # Main HTML structure
-    ├── style.css     # Styling (dark/light mode)
-    └── script.js     # Application logic
-```
+**"Access denied"**
+→ Close any other application using the serial port
 
-## 🔧 Technical Details
+**Timeout errors**
+→ Check wiring, baud rate, parity, and slave ID settings
 
-- **Pure vanilla JavaScript** - No frameworks or dependencies
-- **Offline capable** - Works without internet after initial load
-- **~140 KB total** - Lightweight and fast
-- **Modular architecture** - SerialManager, ModbusMaster, Store, UIManager classes
+**Wrong values**
+→ Try different byte order interpretations in the Value Editor
+
+---
 
 ## 📄 License
 
-MIT License - Feel free to use, modify, and distribute.
+MIT License — free to use, modify, and distribute.
 
