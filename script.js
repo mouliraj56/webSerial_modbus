@@ -149,8 +149,15 @@ class SerialManager {
         if (!this.isConnected || !this.writer) {
             throw new Error('Not connected');
         }
-        const uint8Data = data instanceof Uint8Array ? data : new Uint8Array(data);
-        await this.writer.write(uint8Data);
+        try {
+            const uint8Data = data instanceof Uint8Array ? data : new Uint8Array(data);
+            await this.writer.write(uint8Data);
+        } catch (error) {
+            if (error.name === 'InvalidStateError' || error.message.includes('closed')) {
+                this.handleDisconnect();
+            }
+            throw error;
+        }
     }
 
     /**
@@ -159,7 +166,15 @@ class SerialManager {
     async startReading() {
         if (this.readLoopActive) return;
         this.readLoopActive = true;
-        this.reader = this.port.readable.getReader();
+
+        try {
+            this.reader = this.port.readable.getReader();
+        } catch (error) {
+            console.error('Failed to get reader:', error);
+            this.readLoopActive = false;
+            this.handleDisconnect();
+            return;
+        }
 
         try {
             while (this.readLoopActive) {
@@ -173,12 +188,29 @@ class SerialManager {
         } catch (error) {
             if (this.readLoopActive) {
                 console.error('Read error:', error);
+                this.handleDisconnect();
             }
         } finally {
             if (this.reader) {
-                this.reader.releaseLock();
+                try {
+                    this.reader.releaseLock();
+                } catch (e) {
+                    // Ignore
+                }
                 this.reader = null;
             }
+        }
+    }
+
+    /**
+     * Handle unexpected disconnection
+     */
+    handleDisconnect() {
+        this.isConnected = false;
+        this.readLoopActive = false;
+        this.receiveBuffer = [];
+        if (this.onDisconnect) {
+            this.onDisconnect();
         }
     }
 
@@ -1027,6 +1059,7 @@ class UIManager {
             selectBaudRate: document.getElementById('selectBaudRate'),
             selectParity: document.getElementById('selectParity'),
             connectionStatus: document.getElementById('connectionStatus'),
+            pollingStatus: document.getElementById('pollingStatus'),
             btnDarkMode: document.getElementById('btnDarkMode'),
 
             // Sidebar
@@ -1066,6 +1099,10 @@ class UIManager {
             // Traffic log
             trafficLog: document.getElementById('trafficLog'),
             trafficLogContent: document.getElementById('trafficLogContent'),
+            errorLogContent: document.getElementById('errorLogContent'),
+            tabTraffic: document.getElementById('tabTraffic'),
+            tabErrors: document.getElementById('tabErrors'),
+            errorBadge: document.getElementById('errorBadge'),
             btnClearLog: document.getElementById('btnClearLog'),
             btnPauseLog: document.getElementById('btnPauseLog'),
             btnCopyLog: document.getElementById('btnCopyLog'),
@@ -1099,6 +1136,12 @@ class UIManager {
 
     // ===== Notifications =====
     showNotification(message, type = 'info', duration = 5000) {
+        // Log errors to the error panel instead of toast
+        if (type === 'error') {
+            this.addErrorLog(message);
+            return;
+        }
+
         const container = this.elements.notificationContainer;
         const notification = document.createElement('div');
         notification.className = `notification notification--${type}`;
@@ -1795,6 +1838,45 @@ class UIManager {
 
     clearTrafficLog() {
         this.elements.trafficLogContent.innerHTML = '<div class="traffic-log__empty">No traffic logged yet.</div>';
+        this.elements.errorLogContent.innerHTML = '<div class="traffic-log__empty">No errors logged.</div>';
+        this.errorCount = 0;
+        this.elements.errorBadge.style.display = 'none';
+    }
+
+    // ===== Error Log =====
+    addErrorLog(message) {
+        const content = this.elements.errorLogContent;
+
+        // Remove empty message if exists
+        const emptyMsg = content.querySelector('.traffic-log__empty');
+        if (emptyMsg) emptyMsg.remove();
+
+        const timestamp = new Date().toLocaleTimeString();
+        const div = document.createElement('div');
+        div.className = 'traffic-log__entry traffic-log__entry--error';
+        div.textContent = `[${timestamp}] ${message}`;
+
+        content.appendChild(div);
+        content.scrollTop = content.scrollHeight;
+
+        // Update error badge
+        this.errorCount = (this.errorCount || 0) + 1;
+        this.elements.errorBadge.textContent = this.errorCount;
+        this.elements.errorBadge.style.display = 'inline-block';
+
+        // Auto-open traffic log with errors tab
+        this.elements.trafficLog.style.display = 'flex';
+        this.switchLogTab('errors');
+    }
+
+    switchLogTab(tabName) {
+        // Update tab buttons
+        this.elements.tabTraffic.classList.toggle('traffic-log__tab--active', tabName === 'traffic');
+        this.elements.tabErrors.classList.toggle('traffic-log__tab--active', tabName === 'errors');
+
+        // Update content visibility
+        this.elements.trafficLogContent.classList.toggle('traffic-log__content--active', tabName === 'traffic');
+        this.elements.errorLogContent.classList.toggle('traffic-log__content--active', tabName === 'errors');
     }
 
     // ===== Status Bar =====
@@ -1854,9 +1936,26 @@ class UIManager {
         if (connected) {
             status.classList.add('connection-status--connected');
             status.querySelector('.connection-status__text').textContent = `Connected to ${portName}`;
+            // Show polling status when connected
+            this.elements.pollingStatus.style.display = 'flex';
         } else {
             status.classList.add('connection-status--disconnected');
             status.querySelector('.connection-status__text').textContent = 'Disconnected';
+            // Hide polling status when disconnected
+            this.elements.pollingStatus.style.display = 'none';
+        }
+    }
+
+    updatePollingStatus(isPolling) {
+        const status = this.elements.pollingStatus;
+        status.classList.remove('polling-status--active', 'polling-status--inactive');
+
+        if (isPolling) {
+            status.classList.add('polling-status--active');
+            status.querySelector('.polling-status__text').textContent = 'Polling';
+        } else {
+            status.classList.add('polling-status--inactive');
+            status.querySelector('.polling-status__text').textContent = 'Not Polling';
         }
     }
 }
@@ -1901,12 +2000,38 @@ class ModbusEmulator {
             this.ui.updateTrafficLog(entry);
         };
 
+        // Handle unexpected disconnection
+        this.serialManager.onDisconnect = () => {
+            this.handleUnexpectedDisconnect();
+        };
+
         // Handle page unload
         window.addEventListener('beforeunload', () => {
             this.store.saveToLocalStorage();
         });
 
         console.log('Modbus RTU Master Emulator initialized');
+    }
+
+    handleUnexpectedDisconnect() {
+        // Stop all polling
+        for (const group of this.store.registerGroups) {
+            if (group.autoPolling) {
+                this.store.stopPolling(group.id);
+            }
+        }
+
+        // Update connection state
+        if (this.currentConnection) {
+            this.currentConnection.isConnected = false;
+            this.currentConnection = null;
+        }
+
+        // Update UI
+        this.ui.renderDeviceTree();
+        this.ui.updateConnectionStatus(false);
+        this.ui.updatePollingStatus(false);
+        this.ui.showNotification('Connection lost - port was disconnected', 'error');
     }
 
     setupEventListeners() {
@@ -1948,6 +2073,8 @@ class ModbusEmulator {
             this.ui.showNotification('Traffic log copied to clipboard', 'success');
         });
         elements.btnCloseLog.addEventListener('click', () => this.toggleTrafficLog());
+        elements.tabTraffic.addEventListener('click', () => this.ui.switchLogTab('traffic'));
+        elements.tabErrors.addEventListener('click', () => this.ui.switchLogTab('errors'));
 
         // Value editor tabs
         elements.valueEditor.querySelectorAll('.value-editor__tab').forEach(tab => {
@@ -2537,10 +2664,12 @@ class ModbusEmulator {
                 break;
             case 'startPolling':
                 this.startPollingGroup(itemId);
+                this.ui.updatePollingStatus(true);
                 break;
             case 'stopPolling':
                 this.store.stopPolling(itemId);
                 this.ui.renderDeviceTree();
+                this.ui.updatePollingStatus(false);
                 this.ui.showNotification('Polling stopped', 'info');
                 break;
         }
@@ -2787,12 +2916,14 @@ class ModbusEmulator {
             this.ui.renderDeviceTree();
             this.ui.elements.btnAutoPollIcon.textContent = '▶️';
             this.ui.elements.btnAutoPollText.textContent = 'Auto-Poll';
+            this.ui.updatePollingStatus(false);
             this.ui.showNotification('Polling stopped', 'info');
         } else {
             // Start polling
             this.startPollingGroup(this.ui.selectedTreeItem.id);
             this.ui.elements.btnAutoPollIcon.textContent = '⏹️';
             this.ui.elements.btnAutoPollText.textContent = 'Stop Poll';
+            this.ui.updatePollingStatus(true);
         }
     }
 

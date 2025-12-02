@@ -64,6 +64,10 @@
                     <span class="connection-status__dot"></span>
                     <span class="connection-status__text">Disconnected</span>
                 </div>
+                <div class="polling-status polling-status--inactive" id="pollingStatus" style="display: none;">
+                    <span class="polling-status__dot"></span>
+                    <span class="polling-status__text">Not Polling</span>
+                </div>
                 <button class="btn btn--icon" id="btnDarkMode" title="Toggle Dark Mode">
                     <span>☀️</span>
                 </button>
@@ -189,7 +193,12 @@
         <!-- Traffic Log Panel (Overlay) -->
         <div class="traffic-log" id="trafficLog" style="display: none;">
             <div class="traffic-log__header">
-                <h3 class="traffic-log__title">📊 Communication Traffic</h3>
+                <div class="traffic-log__tabs">
+                    <button class="traffic-log__tab traffic-log__tab--active" data-tab="traffic" id="tabTraffic">📊 Traffic</button>
+                    <button class="traffic-log__tab" data-tab="errors" id="tabErrors">
+                        ⚠️ Errors <span class="traffic-log__badge" id="errorBadge" style="display: none;">0</span>
+                    </button>
+                </div>
                 <div class="traffic-log__actions">
                     <button class="btn btn--small btn--secondary" id="btnClearLog">Clear</button>
                     <button class="btn btn--small btn--secondary" id="btnPauseLog">Pause</button>
@@ -197,8 +206,11 @@
                     <button class="btn btn--small btn--icon" id="btnCloseLog">&times;</button>
                 </div>
             </div>
-            <div class="traffic-log__content" id="trafficLogContent">
+            <div class="traffic-log__content traffic-log__content--active" id="trafficLogContent" data-tab="traffic">
                 <div class="traffic-log__empty">No traffic logged yet.</div>
+            </div>
+            <div class="traffic-log__content" id="errorLogContent" data-tab="errors">
+                <div class="traffic-log__empty">No errors logged.</div>
             </div>
         </div>
 

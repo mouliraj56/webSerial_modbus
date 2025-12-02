@@ -180,12 +180,14 @@ html, body {
 }
 
 .connection-status--disconnected {
-    background: rgba(244, 67, 54, 0.1);
+    background: rgba(244, 67, 54, 0.15);
     color: var(--error-color);
+    animation: attention-bg 1.5s ease-in-out infinite;
 }
 
 .connection-status--disconnected .connection-status__dot {
     background: var(--error-color);
+    animation: blink 1s ease-in-out infinite;
 }
 
 .connection-status--connected {
@@ -196,6 +198,58 @@ html, body {
 .connection-status--connected .connection-status__dot {
     background: var(--success-color);
     animation: pulse 2s infinite;
+}
+
+/* Polling status indicator */
+.polling-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: var(--border-radius);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.polling-status--inactive {
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--warning-color);
+    animation: attention-bg-warning 1.5s ease-in-out infinite;
+}
+
+.polling-status--inactive .polling-status__dot {
+    animation: blink 1s ease-in-out infinite;
+}
+
+.polling-status--active {
+    background: rgba(76, 175, 80, 0.1);
+    color: var(--success-color);
+}
+
+.polling-status__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.polling-status--active .polling-status__dot {
+    animation: pulse 1s infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+@keyframes attention-bg {
+    0%, 100% { background: rgba(244, 67, 54, 0.1); }
+    50% { background: rgba(244, 67, 54, 0.25); }
+}
+
+@keyframes attention-bg-warning {
+    0%, 100% { background: rgba(255, 152, 0, 0.1); }
+    50% { background: rgba(255, 152, 0, 0.25); }
 }
 
 @keyframes pulse {
@@ -842,9 +896,60 @@ html, body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    padding: 8px 16px;
     background: var(--bg-tertiary);
     border-bottom: 1px solid var(--border-color);
+}
+
+.traffic-log__tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.traffic-log__tab {
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: var(--border-radius);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+}
+
+.traffic-log__tab:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.traffic-log__tab--active {
+    background: var(--primary-color);
+    color: white;
+}
+
+.traffic-log__tab--active:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+.traffic-log__badge {
+    background: var(--error-color);
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 10px;
+    min-width: 18px;
+    text-align: center;
+}
+
+.traffic-log__tab--active .traffic-log__badge {
+    background: white;
+    color: var(--error-color);
 }
 
 .traffic-log__title {
@@ -864,6 +969,11 @@ html, body {
     font-family: 'Consolas', 'Monaco', monospace;
     font-size: 12px;
     max-height: 300px;
+    display: none;
+}
+
+.traffic-log__content--active {
+    display: block;
 }
 
 .traffic-log__empty {
