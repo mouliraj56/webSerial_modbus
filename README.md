@@ -119,18 +119,6 @@ Select one or more registers to view values in different formats:
 
 ---
 
-## ⌨️ Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl + N` | New Connection |
-| `Ctrl + O` | Open Connection |
-| `Ctrl + R` | Refresh Registers |
-| `Ctrl + T` | Test Connection |
-| `Esc` | Close dialogs |
-
----
-
 ## 🔒 Privacy & Security
 
 - ✅ **No data leaves your browser** — everything runs locally

@@ -98,23 +98,23 @@
                 <!-- Action Bar -->
                 <div class="action-bar">
                     <div class="action-bar__left">
-                        <button class="btn btn--secondary" id="btnTrafficLog" title="Toggle Traffic Log">
-                            <span class="btn__icon">📊</span> Traffic Log
+                        <button class="btn btn--secondary" id="btnAddRegisters" title="Add registers to the selected group. Right-click a register group for more options." disabled>
+                            <span class="btn__icon">➕</span> Add Registers
                         </button>
-                        <button class="btn btn--secondary" id="btnRefreshRegisters" title="Refresh Registers (Ctrl+R)" disabled>
+                        <button class="btn btn--secondary" id="btnRefreshRegisters" title="Read all registers in the selected group once. Use Auto-Poll for continuous reading." disabled>
                             <span class="btn__icon">♻️</span> Refresh
                         </button>
-                        <button class="btn btn--secondary" id="btnResetRegisters" title="Reset Registers" disabled>
+                        <button class="btn btn--secondary" id="btnAutoPoll" title="Continuously read registers at the configured polling interval. Click again to stop." disabled>
+                            <span class="btn__icon" id="btnAutoPollIcon">▶️</span> <span id="btnAutoPollText">Auto-Poll</span>
+                        </button>
+                        <button class="btn btn--secondary" id="btnResetRegisters" title="Clear all register values and reset them to their default state (0)." disabled>
                             <span class="btn__icon">🔄</span> Reset
                         </button>
-                        <button class="btn btn--secondary" id="btnResetColors" title="Reset Colors" disabled>
-                            <span class="btn__icon">🎨</span> Reset Colors
-                        </button>
-                        <button class="btn btn--secondary" id="btnStopPolling" title="Stop Auto-Polling" disabled>
-                            <span class="btn__icon">⏸️</span> Stop Polling
-                        </button>
-                        <button class="btn btn--secondary" id="btnToggleComments" title="Show/Hide Comments Column">
+                        <button class="btn btn--secondary" id="btnToggleComments" title="Show or hide the comments column in the register table.">
                             <span class="btn__icon">💬</span> <span id="btnToggleCommentsText">Show Comments</span>
+                        </button>
+                        <button class="btn btn--secondary" id="btnTrafficLog" title="View raw Modbus request/response traffic for debugging communication issues.">
+                            <span class="btn__icon">📊</span> Traffic Log
                         </button>
                     </div>
                     <div class="action-bar__right">

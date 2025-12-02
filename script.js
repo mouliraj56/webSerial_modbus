@@ -1037,10 +1037,12 @@ class UIManager {
 
             // Action bar
             btnTrafficLog: document.getElementById('btnTrafficLog'),
+            btnAddRegisters: document.getElementById('btnAddRegisters'),
             btnRefreshRegisters: document.getElementById('btnRefreshRegisters'),
             btnResetRegisters: document.getElementById('btnResetRegisters'),
-            btnResetColors: document.getElementById('btnResetColors'),
-            btnStopPolling: document.getElementById('btnStopPolling'),
+            btnAutoPoll: document.getElementById('btnAutoPoll'),
+            btnAutoPollIcon: document.getElementById('btnAutoPollIcon'),
+            btnAutoPollText: document.getElementById('btnAutoPollText'),
             functionTabs: document.getElementById('functionTabs'),
 
             // Register table (multi-column)
@@ -1360,7 +1362,7 @@ class UIManager {
     onTreeItemSelected(item) {
         // Update toolbar buttons based on selection
         const { btnNewSlave, btnOpenConnection, btnCloseConnection, btnEditConnection, btnEditSlave,
-                btnRefreshRegisters, btnResetRegisters, btnResetColors, btnStopPolling, functionTabs } = this.elements;
+                btnAddRegisters, btnRefreshRegisters, btnResetRegisters, btnAutoPoll, btnAutoPollIcon, btnAutoPollText, functionTabs } = this.elements;
 
         if (item.type === 'connection') {
             const conn = this.app.store.getConnection(item.id);
@@ -1369,10 +1371,10 @@ class UIManager {
             btnCloseConnection.disabled = !conn || !conn.isConnected;
             btnEditConnection.disabled = false;
             btnEditSlave.disabled = true;
+            btnAddRegisters.disabled = true;
             btnRefreshRegisters.disabled = true;
             btnResetRegisters.disabled = true;
-            btnResetColors.disabled = true;
-            btnStopPolling.disabled = true;
+            btnAutoPoll.disabled = true;
             functionTabs.style.display = 'none';
 
             // Show empty state
@@ -1386,10 +1388,10 @@ class UIManager {
             btnCloseConnection.disabled = true;
             btnEditConnection.disabled = true;
             btnEditSlave.disabled = false;
+            btnAddRegisters.disabled = true;
             btnRefreshRegisters.disabled = true;
             btnResetRegisters.disabled = true;
-            btnResetColors.disabled = true;
-            btnStopPolling.disabled = true;
+            btnAutoPoll.disabled = true;
             functionTabs.style.display = 'none';
 
             // Show helpful message for slave selection
@@ -1412,15 +1414,19 @@ class UIManager {
 
         } else if (item.type === 'group') {
             const group = this.app.store.getRegisterGroup(item.id);
+            const isPolling = group && group.autoPolling;
             btnNewSlave.disabled = true;
             btnOpenConnection.disabled = true;
             btnCloseConnection.disabled = true;
             btnEditConnection.disabled = true;
             btnEditSlave.disabled = true;
+            btnAddRegisters.disabled = false;
             btnRefreshRegisters.disabled = false;
             btnResetRegisters.disabled = false;
-            btnResetColors.disabled = false;
-            btnStopPolling.disabled = !group || !group.autoPolling;
+            btnAutoPoll.disabled = false;
+            // Update Auto-Poll button text/icon based on polling state
+            btnAutoPollIcon.textContent = isPolling ? '⏹️' : '▶️';
+            btnAutoPollText.textContent = isPolling ? 'Stop Poll' : 'Auto-Poll';
             functionTabs.style.display = 'flex';
 
             this.renderRegisterTable(item.id);
@@ -1917,10 +1923,10 @@ class ModbusEmulator {
 
         // Action bar
         elements.btnTrafficLog.addEventListener('click', () => this.toggleTrafficLog());
+        elements.btnAddRegisters.addEventListener('click', () => this.handleAddRegistersButton());
         elements.btnRefreshRegisters.addEventListener('click', () => this.handleRefreshRegisters());
         elements.btnResetRegisters.addEventListener('click', () => this.handleResetRegisters());
-        elements.btnResetColors.addEventListener('click', () => this.handleResetColors());
-        elements.btnStopPolling.addEventListener('click', () => this.handleStopPolling());
+        elements.btnAutoPoll.addEventListener('click', () => this.handleToggleAutoPoll());
         elements.btnToggleComments.addEventListener('click', () => this.ui.handleToggleComments());
 
         // Traffic log
@@ -2064,26 +2070,37 @@ class ModbusEmulator {
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
+            // Skip if typing in an input field
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                if (e.key === 'Escape') {
+                    e.target.blur();
+                }
+                return;
+            }
+
             if (e.ctrlKey || e.metaKey) {
-                switch (e.key.toLowerCase()) {
+                const key = e.key.toLowerCase();
+                // Prevent browser defaults for our shortcuts
+                if (['n', 'o', 'r', 't'].includes(key)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+
+                switch (key) {
                     case 'n':
-                        e.preventDefault();
                         this.handleNewConnection();
                         break;
                     case 'o':
-                        e.preventDefault();
                         if (!elements.btnOpenConnection.disabled) {
                             this.handleOpenConnection();
                         }
                         break;
                     case 'r':
-                        e.preventDefault();
                         if (!elements.btnRefreshRegisters.disabled) {
                             this.handleRefreshRegisters();
                         }
                         break;
                     case 't':
-                        e.preventDefault();
                         this.handleTestConnection();
                         break;
                 }
@@ -2758,13 +2775,30 @@ class ModbusEmulator {
         this.ui.showNotification(`Polling started (${group.pollingInterval}ms)`, 'success');
     }
 
-    handleStopPolling() {
+    handleToggleAutoPoll() {
         if (!this.ui.selectedTreeItem || this.ui.selectedTreeItem.type !== 'group') return;
 
-        this.store.stopPolling(this.ui.selectedTreeItem.id);
-        this.ui.renderDeviceTree();
-        this.ui.elements.btnStopPolling.disabled = true;
-        this.ui.showNotification('Polling stopped', 'info');
+        const group = this.store.getRegisterGroup(this.ui.selectedTreeItem.id);
+        if (!group) return;
+
+        if (group.autoPolling) {
+            // Stop polling
+            this.store.stopPolling(this.ui.selectedTreeItem.id);
+            this.ui.renderDeviceTree();
+            this.ui.elements.btnAutoPollIcon.textContent = '▶️';
+            this.ui.elements.btnAutoPollText.textContent = 'Auto-Poll';
+            this.ui.showNotification('Polling stopped', 'info');
+        } else {
+            // Start polling
+            this.startPollingGroup(this.ui.selectedTreeItem.id);
+            this.ui.elements.btnAutoPollIcon.textContent = '⏹️';
+            this.ui.elements.btnAutoPollText.textContent = 'Stop Poll';
+        }
+    }
+
+    handleAddRegistersButton() {
+        if (!this.ui.selectedTreeItem || this.ui.selectedTreeItem.type !== 'group') return;
+        this.handleAddRegisterFromContext(this.ui.selectedTreeItem.id);
     }
 
     handleResetRegisters() {
@@ -2776,13 +2810,6 @@ class ModbusEmulator {
         }
         this.ui.renderRegisterTable(this.ui.selectedTreeItem.id);
         this.ui.showNotification('Registers reset to 0', 'info');
-    }
-
-    handleResetColors() {
-        const rows = this.ui.elements.registerColumns.querySelectorAll('.register-table__row');
-        rows.forEach(row => {
-            row.classList.remove('register-table__row--success', 'register-table__row--error', 'register-table__row--modified');
-        });
     }
 
     toggleTrafficLog() {
