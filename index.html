@@ -422,24 +422,53 @@
     <!-- New Register Group Modal -->
     <div class="modal" id="modalNewGroup">
         <div class="modal__overlay"></div>
-        <div class="modal__content">
+        <div class="modal__content modal__content--wide">
             <div class="modal__header">
                 <h3 class="modal__title">📁 New Register Group</h3>
                 <button class="modal__close" data-modal-close>&times;</button>
             </div>
             <div class="modal__body">
-                <div class="form-group">
-                    <label class="form-label">Group Name</label>
-                    <input type="text" id="modalGroupName" class="form-input" placeholder="e.g., Process Data">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Group Name</label>
+                        <input type="text" id="modalGroupName" class="form-input" placeholder="e.g., Process Data">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Polling Interval (ms)</label>
+                        <input type="number" id="modalPollingInterval" class="form-input" min="100" value="1000">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Polling Interval (ms)</label>
-                    <input type="number" id="modalPollingInterval" class="form-input" min="100" value="1000">
+                <hr style="border: none; border-top: 1px solid var(--border-color); margin: 15px 0;">
+                <p class="form-label" style="margin-bottom: 10px; color: var(--text-secondary);">Add Registers (optional)</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Register Type</label>
+                        <select id="modalGroupRegType" class="form-select">
+                            <option value="4x">4x Holding Register</option>
+                            <option value="3x">3x Input Register</option>
+                            <option value="0x">0x Coil</option>
+                            <option value="1x">1x Discrete Input</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Start Address</label>
+                        <input type="text" id="modalGroupRegAddress" class="form-input" placeholder="e.g., 40001 or 0x0000">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Quantity</label>
+                        <input type="number" id="modalGroupRegQuantity" class="form-input" min="0" max="125" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">&nbsp;</label>
+                        <p style="font-size: 12px; color: var(--text-muted);">Set to 0 to create empty group</p>
+                    </div>
                 </div>
             </div>
             <div class="modal__footer">
                 <button class="btn btn--secondary" data-modal-close>Cancel</button>
-                <button class="btn btn--primary" id="btnAddGroup">Add Group</button>
+                <button class="btn btn--primary" id="btnAddGroup">Create Group</button>
             </div>
         </div>
     </div>

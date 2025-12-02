@@ -1998,9 +1998,26 @@ class ModbusEmulator {
             );
 
             connection.isConnected = true;
+
+            // Auto-create default Slave (ID: 1), Register Group, and 10 registers
+            const slave = this.store.addSlave(connection.id, 1, 'Device 1');
+            const group = this.store.addRegisterGroup(slave.id, 'Registers', 1000);
+
+            // Add 10 holding registers (4x, address 0-9)
+            const defaultRegisters = [];
+            for (let i = 0; i < 10; i++) {
+                defaultRegisters.push({ type: '4x', address: i, alias: '' });
+            }
+            this.store.addRegisters(group.id, defaultRegisters);
+
             this.ui.hideModal('modalNewConnection');
             this.ui.renderDeviceTree();
             this.ui.updateConnectionStatus(true, config.portName);
+
+            // Select the new group so user can see the registers
+            this.ui.selectedTreeItem = { type: 'group', id: group.id };
+            this.ui.onTreeItemSelected(this.ui.selectedTreeItem);
+
             this.ui.showNotification(`Connected to ${config.portName}`, 'success');
 
         } catch (error) {
@@ -2188,6 +2205,9 @@ class ModbusEmulator {
     handleAddGroupFromContext(slaveId) {
         document.getElementById('modalGroupName').value = '';
         document.getElementById('modalPollingInterval').value = '1000';
+        document.getElementById('modalGroupRegType').value = '4x';
+        document.getElementById('modalGroupRegAddress').value = '40001';
+        document.getElementById('modalGroupRegQuantity').value = '10';
         this.pendingGroupSlaveId = slaveId;
         this.ui.showModal('modalNewGroup');
     }
@@ -2201,10 +2221,45 @@ class ModbusEmulator {
             return;
         }
 
-        this.store.addRegisterGroup(this.pendingGroupSlaveId, name, pollingInterval);
+        // Create the group
+        const group = this.store.addRegisterGroup(this.pendingGroupSlaveId, name, pollingInterval);
+
+        // Add registers if quantity > 0
+        const regType = document.getElementById('modalGroupRegType').value;
+        const regAddressStr = document.getElementById('modalGroupRegAddress').value;
+        const regQuantity = parseInt(document.getElementById('modalGroupRegQuantity').value) || 0;
+
+        if (regQuantity > 0 && regAddressStr) {
+            // Parse address (supports hex like 0x0000 or decimal like 40001)
+            let address;
+            if (regAddressStr.startsWith('0x') || regAddressStr.startsWith('0X')) {
+                address = parseInt(regAddressStr, 16);
+            } else {
+                address = ModbusMaster.convertAddress(regAddressStr, regType);
+            }
+
+            if (!isNaN(address)) {
+                const configs = [];
+                for (let i = 0; i < regQuantity; i++) {
+                    configs.push({
+                        type: regType,
+                        address: address + i,
+                        alias: ''
+                    });
+                }
+                this.store.addRegisters(group.id, configs);
+            }
+        }
+
         this.ui.hideModal('modalNewGroup');
         this.ui.renderDeviceTree();
-        this.ui.showNotification(`Register group "${name}" added`, 'success');
+
+        // Select the new group
+        this.ui.selectedTreeItem = { type: 'group', id: group.id };
+        this.ui.onTreeItemSelected(this.ui.selectedTreeItem);
+
+        const regMsg = regQuantity > 0 ? ` with ${regQuantity} registers` : '';
+        this.ui.showNotification(`Register group "${name}" created${regMsg}`, 'success');
     }
 
     handleEditGroupFromContext(groupId) {
