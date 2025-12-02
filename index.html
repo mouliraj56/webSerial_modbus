@@ -113,6 +113,9 @@
                         <button class="btn btn--secondary" id="btnStopPolling" title="Stop Auto-Polling" disabled>
                             <span class="btn__icon">⏸️</span> Stop Polling
                         </button>
+                        <button class="btn btn--secondary" id="btnToggleComments" title="Show/Hide Comments Column">
+                            <span class="btn__icon">💬</span> <span id="btnToggleCommentsText">Show Comments</span>
+                        </button>
                     </div>
                     <div class="action-bar__right">
                         <div class="function-tabs" id="functionTabs" style="display: none;">
@@ -127,36 +130,27 @@
                     </div>
                 </div>
 
-                <!-- Register Table -->
+                <!-- Register Table (Multi-Column Layout) -->
                 <div class="register-table-container" id="registerTableContainer">
                     <div class="register-table__empty" id="registerTableEmpty">
                         <div class="register-table__empty-icon">📋</div>
                         <h3>No Registers to Display</h3>
                         <p>Select a register group from the device tree to view registers.</p>
                     </div>
-                    <table class="register-table" id="registerTable" style="display: none;">
-                        <thead>
-                            <tr>
-                                <th class="register-table__th register-table__th--type">Type</th>
-                                <th class="register-table__th register-table__th--address">Address</th>
-                                <th class="register-table__th register-table__th--alias">Alias</th>
-                                <th class="register-table__th register-table__th--value">Value</th>
-                                <th class="register-table__th register-table__th--comment">Comment</th>
-                            </tr>
-                        </thead>
-                        <tbody id="registerTableBody">
-                        </tbody>
-                    </table>
+                    <div class="register-columns hide-comments" id="registerColumns" style="display: none;">
+                        <!-- Columns will be dynamically generated -->
+                    </div>
                 </div>
 
                 <!-- Value Editor Panel -->
                 <div class="value-editor" id="valueEditor">
+                    <div class="value-editor__resize" id="valueEditorResize"></div>
                     <div class="value-editor__header">
                         <div class="value-editor__tabs">
-                            <button class="value-editor__tab value-editor__tab--active" data-tab="numeric">Unsigned-Signed-Hex-Binary</button>
-                            <button class="value-editor__tab" data-tab="long">Long</button>
-                            <button class="value-editor__tab" data-tab="float">Float</button>
-                            <button class="value-editor__tab" data-tab="double">Double</button>
+                            <button class="value-editor__tab value-editor__tab--active" data-tab="numeric">Numeric</button>
+                            <button class="value-editor__tab" data-tab="long">Long (32-bit)</button>
+                            <button class="value-editor__tab" data-tab="float">Float (32-bit)</button>
+                            <button class="value-editor__tab" data-tab="double">Double (64-bit)</button>
                             <button class="value-editor__tab" data-tab="string">String</button>
                         </div>
                         <button class="value-editor__toggle" id="valueEditorToggle" title="Collapse/Expand">▼</button>
@@ -164,85 +158,28 @@
                     <div class="value-editor__content" id="valueEditorContent">
                         <!-- Numeric Tab -->
                         <div class="value-editor__panel value-editor__panel--active" data-panel="numeric">
-                            <div class="value-editor__info">Select a register to view/edit its value</div>
-                            <div class="value-editor__grid" style="display: none;">
-                                <div class="value-editor__row">
-                                    <label>Unsigned (16-bit):</label>
-                                    <input type="number" id="valueUnsigned" min="0" max="65535" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Signed (16-bit):</label>
-                                    <input type="number" id="valueSigned" min="-32768" max="32767" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Hexadecimal:</label>
-                                    <input type="text" id="valueHex" placeholder="0x0000" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Binary:</label>
-                                    <input type="text" id="valueBinary" placeholder="0000000000000000" class="value-editor__input value-editor__input--wide">
-                                </div>
-                            </div>
+                            <div class="value-editor__info">Select register(s) to view values</div>
+                            <div class="value-editor__values" id="numericValues"></div>
                         </div>
                         <!-- Long Tab -->
                         <div class="value-editor__panel" data-panel="long">
-                            <div class="value-editor__info">Select 2 consecutive registers to view as 32-bit Long</div>
-                            <div class="value-editor__grid" style="display: none;">
-                                <div class="value-editor__row">
-                                    <label>Long AB CD (Big-endian):</label>
-                                    <input type="number" id="valueLongABCD" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Long CD AB (Little-endian word):</label>
-                                    <input type="number" id="valueLongCDAB" class="value-editor__input">
-                                </div>
-                            </div>
+                            <div class="value-editor__info">Select 2+ consecutive registers to view as 32-bit Long</div>
+                            <div class="value-editor__values" id="longValues"></div>
                         </div>
                         <!-- Float Tab -->
                         <div class="value-editor__panel" data-panel="float">
-                            <div class="value-editor__info">Select 2 consecutive registers to view as 32-bit Float</div>
-                            <div class="value-editor__grid" style="display: none;">
-                                <div class="value-editor__row">
-                                    <label>Float AB CD:</label>
-                                    <input type="number" step="any" id="valueFloatABCD" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Float CD AB:</label>
-                                    <input type="number" step="any" id="valueFloatCDAB" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Float BA DC:</label>
-                                    <input type="number" step="any" id="valueFloatBADC" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Float DC BA:</label>
-                                    <input type="number" step="any" id="valueFloatDCBA" class="value-editor__input">
-                                </div>
-                            </div>
+                            <div class="value-editor__info">Select 2+ consecutive registers to view as 32-bit Float</div>
+                            <div class="value-editor__values" id="floatValues"></div>
                         </div>
                         <!-- Double Tab -->
                         <div class="value-editor__panel" data-panel="double">
-                            <div class="value-editor__info">Select 4 consecutive registers to view as 64-bit Double</div>
-                            <div class="value-editor__grid" style="display: none;">
-                                <div class="value-editor__row">
-                                    <label>Double (Big-endian):</label>
-                                    <input type="number" step="any" id="valueDoubleBE" class="value-editor__input">
-                                </div>
-                                <div class="value-editor__row">
-                                    <label>Double (Little-endian):</label>
-                                    <input type="number" step="any" id="valueDoubleLE" class="value-editor__input">
-                                </div>
-                            </div>
+                            <div class="value-editor__info">Select 4+ consecutive registers to view as 64-bit Double</div>
+                            <div class="value-editor__values" id="doubleValues"></div>
                         </div>
                         <!-- String Tab -->
                         <div class="value-editor__panel" data-panel="string">
                             <div class="value-editor__info">Select registers to view as ASCII string</div>
-                            <div class="value-editor__grid" style="display: none;">
-                                <div class="value-editor__row value-editor__row--full">
-                                    <label>ASCII String:</label>
-                                    <input type="text" id="valueString" class="value-editor__input value-editor__input--wide">
-                                </div>
-                            </div>
+                            <div class="value-editor__values" id="stringValues"></div>
                         </div>
                     </div>
                 </div>

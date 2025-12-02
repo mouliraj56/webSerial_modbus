@@ -1043,16 +1043,23 @@ class UIManager {
             btnStopPolling: document.getElementById('btnStopPolling'),
             functionTabs: document.getElementById('functionTabs'),
 
-            // Register table
+            // Register table (multi-column)
             registerTableContainer: document.getElementById('registerTableContainer'),
             registerTableEmpty: document.getElementById('registerTableEmpty'),
-            registerTable: document.getElementById('registerTable'),
-            registerTableBody: document.getElementById('registerTableBody'),
+            registerColumns: document.getElementById('registerColumns'),
+            btnToggleComments: document.getElementById('btnToggleComments'),
+            btnToggleCommentsText: document.getElementById('btnToggleCommentsText'),
 
             // Value editor
             valueEditor: document.getElementById('valueEditor'),
             valueEditorToggle: document.getElementById('valueEditorToggle'),
+            valueEditorResize: document.getElementById('valueEditorResize'),
             valueEditorContent: document.getElementById('valueEditorContent'),
+            numericValues: document.getElementById('numericValues'),
+            longValues: document.getElementById('longValues'),
+            floatValues: document.getElementById('floatValues'),
+            doubleValues: document.getElementById('doubleValues'),
+            stringValues: document.getElementById('stringValues'),
 
             // Traffic log
             trafficLog: document.getElementById('trafficLog'),
@@ -1422,14 +1429,15 @@ class UIManager {
         this.updateStatusBar();
     }
 
-    // ===== Register Table =====
+    // ===== Register Table (Multi-Column) =====
     showRegisterTableEmpty() {
         this.elements.registerTableEmpty.style.display = 'flex';
-        this.elements.registerTable.style.display = 'none';
+        this.elements.registerColumns.style.display = 'none';
     }
 
     renderRegisterTable(groupId) {
         const registers = this.app.store.getRegistersForGroup(groupId);
+        const ROWS_PER_COLUMN = 10;
 
         if (registers.length === 0) {
             this.elements.registerTableEmpty.innerHTML = `
@@ -1442,75 +1450,113 @@ class UIManager {
         }
 
         this.elements.registerTableEmpty.style.display = 'none';
-        this.elements.registerTable.style.display = 'table';
+        this.elements.registerColumns.style.display = 'flex';
 
-        const tbody = this.elements.registerTableBody;
-        tbody.innerHTML = '';
+        // Preserve comments visibility state
+        const hideComments = this.elements.registerColumns.classList.contains('hide-comments');
 
-        for (const reg of registers) {
-            const typeInfo = REGISTER_TYPES[reg.type];
-            const isWritable = typeInfo && typeInfo.writeFC !== null;
-            const rowClass = isWritable ? '' : 'register-table__row--readonly';
+        const container = this.elements.registerColumns;
+        container.innerHTML = '';
+        if (hideComments) container.classList.add('hide-comments');
 
-            const tr = document.createElement('tr');
-            tr.className = `register-table__row ${rowClass}`;
-            tr.dataset.registerId = reg.id;
-            tr.dataset.registerType = reg.type;
+        // Split registers into columns of ROWS_PER_COLUMN each
+        const numColumns = Math.ceil(registers.length / ROWS_PER_COLUMN);
 
-            tr.innerHTML = `
-                <td class="register-table__cell register-table__cell--type">${reg.type} ${typeInfo ? typeInfo.name : ''}</td>
-                <td class="register-table__cell register-table__cell--address">${ValueInterpreter.toHexString(reg.address)}</td>
-                <td class="register-table__cell register-table__cell--alias">${reg.alias || '-'}</td>
-                <td class="register-table__cell register-table__cell--value ${isWritable ? 'editable' : ''}">${reg.value}</td>
-                <td class="register-table__cell register-table__cell--comment">${reg.comment || ''}</td>
+        for (let col = 0; col < numColumns; col++) {
+            const startIdx = col * ROWS_PER_COLUMN;
+            const columnRegs = registers.slice(startIdx, startIdx + ROWS_PER_COLUMN);
+
+            const columnDiv = document.createElement('div');
+            columnDiv.className = 'register-column';
+
+            const table = document.createElement('table');
+            table.className = 'register-table';
+
+            // Header
+            const thead = document.createElement('thead');
+            thead.innerHTML = `
+                <tr>
+                    <th class="register-table__th register-table__th--type">Type</th>
+                    <th class="register-table__th register-table__th--address">Addr</th>
+                    <th class="register-table__th register-table__th--alias">Alias</th>
+                    <th class="register-table__th register-table__th--value">Value</th>
+                    <th class="register-table__th register-table__th--comment">Comment</th>
+                </tr>
             `;
+            table.appendChild(thead);
 
-            // Row selection
-            tr.addEventListener('click', (e) => {
-                if (e.target.tagName === 'INPUT') return;
+            // Body
+            const tbody = document.createElement('tbody');
+            for (const reg of columnRegs) {
+                const typeInfo = REGISTER_TYPES[reg.type];
+                const isWritable = typeInfo && typeInfo.writeFC !== null;
+                const rowClass = isWritable ? '' : 'register-table__row--readonly';
 
-                if (e.ctrlKey) {
-                    // Toggle selection
-                    tr.classList.toggle('selected');
-                    if (tr.classList.contains('selected')) {
-                        this.selectedRegisters.push(reg.id);
-                    } else {
-                        this.selectedRegisters = this.selectedRegisters.filter(id => id !== reg.id);
-                    }
-                } else if (e.shiftKey && this.selectedRegisters.length > 0) {
-                    // Range selection
-                    const rows = Array.from(tbody.querySelectorAll('tr'));
-                    const lastSelectedRow = tbody.querySelector(`tr[data-register-id="${this.selectedRegisters[this.selectedRegisters.length - 1]}"]`);
-                    const startIdx = rows.indexOf(lastSelectedRow);
-                    const endIdx = rows.indexOf(tr);
-                    const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+                const tr = document.createElement('tr');
+                tr.className = `register-table__row ${rowClass}`;
+                tr.dataset.registerId = reg.id;
+                tr.dataset.registerType = reg.type;
 
-                    for (let i = from; i <= to; i++) {
-                        rows[i].classList.add('selected');
-                        const regId = rows[i].dataset.registerId;
-                        if (!this.selectedRegisters.includes(regId)) {
-                            this.selectedRegisters.push(regId);
+                tr.innerHTML = `
+                    <td class="register-table__cell register-table__cell--type">${reg.type}</td>
+                    <td class="register-table__cell register-table__cell--address">${ValueInterpreter.toHexString(reg.address)}</td>
+                    <td class="register-table__cell register-table__cell--alias">${reg.alias || '-'}</td>
+                    <td class="register-table__cell register-table__cell--value ${isWritable ? 'editable' : ''}">${reg.value}</td>
+                    <td class="register-table__cell register-table__cell--comment">${reg.comment || ''}</td>
+                `;
+
+                // Row selection with Ctrl+click and Shift+click support
+                tr.addEventListener('click', (e) => {
+                    if (e.target.tagName === 'INPUT') return;
+
+                    const allRows = Array.from(container.querySelectorAll('tr[data-register-id]'));
+
+                    if (e.ctrlKey) {
+                        // Toggle selection
+                        tr.classList.toggle('selected');
+                        if (tr.classList.contains('selected')) {
+                            this.selectedRegisters.push(reg.id);
+                        } else {
+                            this.selectedRegisters = this.selectedRegisters.filter(id => id !== reg.id);
                         }
+                    } else if (e.shiftKey && this.selectedRegisters.length > 0) {
+                        // Range selection
+                        const lastSelectedRow = container.querySelector(`tr[data-register-id="${this.selectedRegisters[this.selectedRegisters.length - 1]}"]`);
+                        const startIdx = allRows.indexOf(lastSelectedRow);
+                        const endIdx = allRows.indexOf(tr);
+                        const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+
+                        for (let i = from; i <= to; i++) {
+                            allRows[i].classList.add('selected');
+                            const regId = allRows[i].dataset.registerId;
+                            if (!this.selectedRegisters.includes(regId)) {
+                                this.selectedRegisters.push(regId);
+                            }
+                        }
+                    } else {
+                        // Single selection - clear all and select this one
+                        container.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
+                        tr.classList.add('selected');
+                        this.selectedRegisters = [reg.id];
                     }
-                } else {
-                    // Single selection
-                    tbody.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
-                    tr.classList.add('selected');
-                    this.selectedRegisters = [reg.id];
+
+                    this.updateValueEditor();
+                });
+
+                // Double click to edit (if writable)
+                if (isWritable) {
+                    const valueCell = tr.querySelector('.register-table__cell--value');
+                    valueCell.addEventListener('dblclick', () => {
+                        this.startCellEdit(valueCell, reg);
+                    });
                 }
 
-                this.updateValueEditor();
-            });
-
-            // Double click to edit (if writable)
-            if (isWritable) {
-                const valueCell = tr.querySelector('.register-table__cell--value');
-                valueCell.addEventListener('dblclick', () => {
-                    this.startCellEdit(valueCell, reg);
-                });
+                tbody.appendChild(tr);
             }
 
-            tbody.appendChild(tr);
+            table.appendChild(tbody);
+            columnDiv.appendChild(table);
+            container.appendChild(columnDiv);
         }
     }
 
@@ -1562,7 +1608,7 @@ class UIManager {
     }
 
     updateRegisterValue(registerId, value) {
-        const row = this.elements.registerTableBody.querySelector(`tr[data-register-id="${registerId}"]`);
+        const row = this.elements.registerColumns.querySelector(`tr[data-register-id="${registerId}"]`);
         if (row && !this.editingCell) {
             const valueCell = row.querySelector('.register-table__cell--value');
             if (valueCell && valueCell.textContent != value) {
@@ -1573,15 +1619,27 @@ class UIManager {
         }
     }
 
+    handleToggleComments() {
+        const container = this.elements.registerColumns;
+        container.classList.toggle('hide-comments');
+        const isHidden = container.classList.contains('hide-comments');
+        this.elements.btnToggleCommentsText.textContent = isHidden ? 'Show Comments' : 'Hide Comments';
+    }
+
     // ===== Value Editor =====
     updateValueEditor() {
+        // Clear all value containers
+        this.elements.numericValues.innerHTML = '';
+        this.elements.longValues.innerHTML = '';
+        this.elements.floatValues.innerHTML = '';
+        this.elements.doubleValues.innerHTML = '';
+        this.elements.stringValues.innerHTML = '';
+
         const panels = this.elements.valueEditorContent.querySelectorAll('.value-editor__panel');
 
         if (this.selectedRegisters.length === 0) {
             panels.forEach(panel => {
                 panel.querySelector('.value-editor__info').style.display = '';
-                const grid = panel.querySelector('.value-editor__grid');
-                if (grid) grid.style.display = 'none';
             });
             return;
         }
@@ -1591,78 +1649,117 @@ class UIManager {
             .filter(r => r)
             .sort((a, b) => a.address - b.address);
 
-        // Numeric tab (single register)
+        // Numeric tab - show each register as a card
         const numericPanel = this.elements.valueEditorContent.querySelector('[data-panel="numeric"]');
-        if (registers.length === 1) {
-            const reg = registers[0];
+        if (registers.length > 0) {
             numericPanel.querySelector('.value-editor__info').style.display = 'none';
-            numericPanel.querySelector('.value-editor__grid').style.display = 'grid';
-
-            document.getElementById('valueUnsigned').value = ValueInterpreter.toUnsigned16(reg.value);
-            document.getElementById('valueSigned').value = ValueInterpreter.toSigned16(reg.value);
-            document.getElementById('valueHex').value = ValueInterpreter.toHexString(reg.value);
-            document.getElementById('valueBinary').value = ValueInterpreter.toBinaryString(reg.value);
+            for (const reg of registers) {
+                const card = document.createElement('div');
+                card.className = 'value-editor__card';
+                card.innerHTML = `
+                    <div class="value-editor__card-header">${reg.type} @ ${ValueInterpreter.toHexString(reg.address)}</div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">Unsigned:</span><span class="value-editor__card-value">${ValueInterpreter.toUnsigned16(reg.value)}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">Signed:</span><span class="value-editor__card-value">${ValueInterpreter.toSigned16(reg.value)}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">Hex:</span><span class="value-editor__card-value">${ValueInterpreter.toHexString(reg.value)}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">Binary:</span><span class="value-editor__card-value">${ValueInterpreter.toBinaryString(reg.value)}</span></div>
+                `;
+                this.elements.numericValues.appendChild(card);
+            }
         } else {
             numericPanel.querySelector('.value-editor__info').style.display = '';
-            numericPanel.querySelector('.value-editor__info').textContent = 'Select a single register to view numeric values';
-            numericPanel.querySelector('.value-editor__grid').style.display = 'none';
         }
 
-        // Float tab (2 registers)
-        const floatPanel = this.elements.valueEditorContent.querySelector('[data-panel="float"]');
-        if (registers.length === 2 && this.areConsecutive(registers)) {
-            floatPanel.querySelector('.value-editor__info').style.display = 'none';
-            floatPanel.querySelector('.value-editor__grid').style.display = 'grid';
-
-            document.getElementById('valueFloatABCD').value = ValueInterpreter.toFloat32(registers[0].value, registers[1].value, 'ABCD').toFixed(6);
-            document.getElementById('valueFloatCDAB').value = ValueInterpreter.toFloat32(registers[0].value, registers[1].value, 'CDAB').toFixed(6);
-            document.getElementById('valueFloatBADC').value = ValueInterpreter.toFloat32(registers[0].value, registers[1].value, 'BADC').toFixed(6);
-            document.getElementById('valueFloatDCBA').value = ValueInterpreter.toFloat32(registers[0].value, registers[1].value, 'DCBA').toFixed(6);
-        } else {
-            floatPanel.querySelector('.value-editor__info').style.display = '';
-            floatPanel.querySelector('.value-editor__grid').style.display = 'none';
-        }
-
-        // Long tab (2 registers)
+        // Long tab - show pairs of consecutive registers as 32-bit long
         const longPanel = this.elements.valueEditorContent.querySelector('[data-panel="long"]');
-        if (registers.length === 2 && this.areConsecutive(registers)) {
+        const longPairs = this.getConsecutivePairs(registers, 2);
+        if (longPairs.length > 0) {
             longPanel.querySelector('.value-editor__info').style.display = 'none';
-            longPanel.querySelector('.value-editor__grid').style.display = 'grid';
-
-            document.getElementById('valueLongABCD').value = ValueInterpreter.toLong32(registers[0].value, registers[1].value, 'ABCD');
-            document.getElementById('valueLongCDAB').value = ValueInterpreter.toLong32(registers[0].value, registers[1].value, 'CDAB');
+            for (const pair of longPairs) {
+                const card = document.createElement('div');
+                card.className = 'value-editor__card';
+                card.innerHTML = `
+                    <div class="value-editor__card-header">${ValueInterpreter.toHexString(pair[0].address)} - ${ValueInterpreter.toHexString(pair[1].address)}</div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">AB CD:</span><span class="value-editor__card-value">${ValueInterpreter.toLong32(pair[0].value, pair[1].value, 'ABCD')}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">CD AB:</span><span class="value-editor__card-value">${ValueInterpreter.toLong32(pair[0].value, pair[1].value, 'CDAB')}</span></div>
+                `;
+                this.elements.longValues.appendChild(card);
+            }
         } else {
             longPanel.querySelector('.value-editor__info').style.display = '';
-            longPanel.querySelector('.value-editor__grid').style.display = 'none';
         }
 
-        // Double tab (4 registers)
-        const doublePanel = this.elements.valueEditorContent.querySelector('[data-panel="double"]');
-        if (registers.length === 4 && this.areConsecutive(registers)) {
-            doublePanel.querySelector('.value-editor__info').style.display = 'none';
-            doublePanel.querySelector('.value-editor__grid').style.display = 'grid';
+        // Float tab - show pairs of consecutive registers as 32-bit float
+        const floatPanel = this.elements.valueEditorContent.querySelector('[data-panel="float"]');
+        const floatPairs = this.getConsecutivePairs(registers, 2);
+        if (floatPairs.length > 0) {
+            floatPanel.querySelector('.value-editor__info').style.display = 'none';
+            for (const pair of floatPairs) {
+                const card = document.createElement('div');
+                card.className = 'value-editor__card';
+                card.innerHTML = `
+                    <div class="value-editor__card-header">${ValueInterpreter.toHexString(pair[0].address)} - ${ValueInterpreter.toHexString(pair[1].address)}</div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">AB CD:</span><span class="value-editor__card-value">${ValueInterpreter.toFloat32(pair[0].value, pair[1].value, 'ABCD').toFixed(6)}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">CD AB:</span><span class="value-editor__card-value">${ValueInterpreter.toFloat32(pair[0].value, pair[1].value, 'CDAB').toFixed(6)}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">BA DC:</span><span class="value-editor__card-value">${ValueInterpreter.toFloat32(pair[0].value, pair[1].value, 'BADC').toFixed(6)}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">DC BA:</span><span class="value-editor__card-value">${ValueInterpreter.toFloat32(pair[0].value, pair[1].value, 'DCBA').toFixed(6)}</span></div>
+                `;
+                this.elements.floatValues.appendChild(card);
+            }
+        } else {
+            floatPanel.querySelector('.value-editor__info').style.display = '';
+        }
 
-            document.getElementById('valueDoubleBE').value = ValueInterpreter.toFloat64(
-                registers[0].value, registers[1].value, registers[2].value, registers[3].value, true
-            ).toFixed(10);
-            document.getElementById('valueDoubleLE').value = ValueInterpreter.toFloat64(
-                registers[0].value, registers[1].value, registers[2].value, registers[3].value, false
-            ).toFixed(10);
+        // Double tab - show groups of 4 consecutive registers as 64-bit double
+        const doublePanel = this.elements.valueEditorContent.querySelector('[data-panel="double"]');
+        const doubleGroups = this.getConsecutivePairs(registers, 4);
+        if (doubleGroups.length > 0) {
+            doublePanel.querySelector('.value-editor__info').style.display = 'none';
+            for (const group of doubleGroups) {
+                const card = document.createElement('div');
+                card.className = 'value-editor__card';
+                card.innerHTML = `
+                    <div class="value-editor__card-header">${ValueInterpreter.toHexString(group[0].address)} - ${ValueInterpreter.toHexString(group[3].address)}</div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">Big-endian:</span><span class="value-editor__card-value">${ValueInterpreter.toFloat64(group[0].value, group[1].value, group[2].value, group[3].value, true).toFixed(10)}</span></div>
+                    <div class="value-editor__card-row"><span class="value-editor__card-label">Little-endian:</span><span class="value-editor__card-value">${ValueInterpreter.toFloat64(group[0].value, group[1].value, group[2].value, group[3].value, false).toFixed(10)}</span></div>
+                `;
+                this.elements.doubleValues.appendChild(card);
+            }
         } else {
             doublePanel.querySelector('.value-editor__info').style.display = '';
-            doublePanel.querySelector('.value-editor__grid').style.display = 'none';
         }
 
-        // String tab
+        // String tab - show all selected registers as ASCII
         const stringPanel = this.elements.valueEditorContent.querySelector('[data-panel="string"]');
         if (registers.length > 0) {
             stringPanel.querySelector('.value-editor__info').style.display = 'none';
-            stringPanel.querySelector('.value-editor__grid').style.display = 'grid';
-            document.getElementById('valueString').value = ValueInterpreter.toString(registers.map(r => r.value));
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'value-editor__string-input';
+            input.value = ValueInterpreter.toString(registers.map(r => r.value));
+            input.readOnly = true;
+            this.elements.stringValues.appendChild(input);
         } else {
             stringPanel.querySelector('.value-editor__info').style.display = '';
-            stringPanel.querySelector('.value-editor__grid').style.display = 'none';
         }
+    }
+
+    // Get groups of N consecutive registers
+    getConsecutivePairs(registers, size) {
+        const groups = [];
+        for (let i = 0; i <= registers.length - size; i++) {
+            let isConsecutive = true;
+            for (let j = 1; j < size; j++) {
+                if (registers[i + j].address !== registers[i + j - 1].address + 1) {
+                    isConsecutive = false;
+                    break;
+                }
+            }
+            if (isConsecutive) {
+                groups.push(registers.slice(i, i + size));
+                i += size - 1; // Skip to next group
+            }
+        }
+        return groups;
     }
 
     areConsecutive(registers) {
@@ -1824,6 +1921,7 @@ class ModbusEmulator {
         elements.btnResetRegisters.addEventListener('click', () => this.handleResetRegisters());
         elements.btnResetColors.addEventListener('click', () => this.handleResetColors());
         elements.btnStopPolling.addEventListener('click', () => this.handleStopPolling());
+        elements.btnToggleComments.addEventListener('click', () => this.ui.handleToggleComments());
 
         // Traffic log
         elements.btnClearLog.addEventListener('click', () => {
@@ -1860,6 +1958,35 @@ class ModbusEmulator {
         // Value editor toggle
         elements.valueEditorToggle.addEventListener('click', () => {
             elements.valueEditor.classList.toggle('collapsed');
+        });
+
+        // Value editor resize
+        let isResizingEditor = false;
+        let editorStartY = 0;
+        let editorStartHeight = 0;
+
+        elements.valueEditorResize.addEventListener('mousedown', (e) => {
+            isResizingEditor = true;
+            editorStartY = e.clientY;
+            editorStartHeight = elements.valueEditor.offsetHeight;
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizingEditor) return;
+            const deltaY = editorStartY - e.clientY;
+            const newHeight = Math.max(100, Math.min(window.innerHeight * 0.6, editorStartHeight + deltaY));
+            elements.valueEditor.style.height = newHeight + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizingEditor) {
+                isResizingEditor = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
         });
 
         // Dark mode toggle
@@ -2652,7 +2779,7 @@ class ModbusEmulator {
     }
 
     handleResetColors() {
-        const rows = this.ui.elements.registerTableBody.querySelectorAll('.register-table__row');
+        const rows = this.ui.elements.registerColumns.querySelectorAll('.register-table__row');
         rows.forEach(row => {
             row.classList.remove('register-table__row--success', 'register-table__row--error', 'register-table__row--modified');
         });
