@@ -13,7 +13,10 @@ A free, browser-based tool for communicating with Modbus RTU devices. No install
 - 📊 **Read & write** coils, discrete inputs, input registers, and holding registers
 - 🔄 **Auto-polling** with configurable intervals
 - 📈 **Multiple data formats** — view values as integers, floats, hex, binary, or strings
-- 🌙 **Dark mode** interface
+- 📋 **Multi-column register view** — 10 rows per column with horizontal scrolling
+- 🔴 **Connection status indicators** — blinking alerts for disconnected or not-polling states
+- 📝 **Traffic & Error logging** — tabbed panel for communication traffic and error logs
+- 🌙 **Dark mode** interface (default)
 - 💾 **Saves your configuration** automatically in the browser
 
 
@@ -131,9 +134,15 @@ Select one or more registers to view values in different formats:
 ## 💡 Tips
 
 - **Test Connection**: Use the `TC` button to verify your device responds
-- **Traffic Log**: Click "Traffic Log" to see raw Modbus frames for debugging
+- **Traffic & Errors Panel**: Click "Traffic Log" to see raw Modbus frames and errors
+  - **Traffic tab**: Shows TX/RX communication
+  - **Errors tab**: Shows all errors with timestamps (auto-opens when error occurs)
 - **Byte Order**: Industrial devices vary — try different byte orders (ABCD, CDAB, etc.) for float values
 - **Address Formats**: Enter addresses as `40001` or `0x0000` — both work
+- **Status Indicators**: Watch the toolbar for connection and polling status
+  - 🔴 Blinking red = Disconnected
+  - 🟠 Blinking orange = Connected but not polling
+  - 🟢 Steady green = Connected and polling
 
 ---
 
