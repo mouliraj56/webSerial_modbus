@@ -497,6 +497,676 @@ class ModbusMaster {
 }
 
 // ============================================
+// Modbus Slave (Server) Handler
+// ============================================
+class ModbusSlave {
+    constructor(slaveId = 1) {
+        this.slaveId = slaveId;
+        this.responseDelay = 0;
+        this.autoIncrement = false;
+        this.randomValues = false;
+
+        // Register maps - using Maps for efficient lookup
+        this.registerMaps = {
+            coils: new Map(),              // 0x - FC 01, 05, 0F
+            discreteInputs: new Map(),     // 1x - FC 02
+            inputRegisters: new Map(),     // 3x - FC 04
+            holdingRegisters: new Map()    // 4x - FC 03, 06, 10
+        };
+
+        // Access statistics
+        this.accessStats = {
+            coils: new Map(),
+            discreteInputs: new Map(),
+            inputRegisters: new Map(),
+            holdingRegisters: new Map()
+        };
+
+        // Forced exceptions (for testing)
+        this.forcedExceptions = new Map(); // address -> exception code
+
+        // Callbacks
+        this.onRegisterRead = null;
+        this.onRegisterWrite = null;
+        this.onRequest = null;
+        this.onResponse = null;
+    }
+
+    /**
+     * Configure slave settings
+     */
+    configure(config) {
+        this.slaveId = config.slaveId || 1;
+        this.responseDelay = config.responseDelay || 0;
+        this.autoIncrement = config.autoIncrement || false;
+        this.randomValues = config.randomValues || false;
+    }
+
+    /**
+     * Add a range of registers
+     */
+    addRegisterRange(type, startAddress, quantity, initialValue = 0) {
+        const map = this.registerMaps[type];
+        const statsMap = this.accessStats[type];
+
+        if (!map) {
+            throw new Error(`Invalid register type: ${type}`);
+        }
+
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            map.set(addr, initialValue);
+            statsMap.set(addr, { readCount: 0, writeCount: 0, lastAccess: null });
+        }
+    }
+
+    /**
+     * Remove a range of registers
+     */
+    removeRegisterRange(type, startAddress, quantity) {
+        const map = this.registerMaps[type];
+        const statsMap = this.accessStats[type];
+
+        if (!map) return;
+
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            map.delete(addr);
+            statsMap.delete(addr);
+        }
+    }
+
+    /**
+     * Clear all registers of a type
+     */
+    clearRegisters(type) {
+        if (this.registerMaps[type]) {
+            this.registerMaps[type].clear();
+            this.accessStats[type].clear();
+        }
+    }
+
+    /**
+     * Set a single register value
+     */
+    setRegister(type, address, value) {
+        const map = this.registerMaps[type];
+        if (map && map.has(address)) {
+            map.set(address, value);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Get a single register value
+     */
+    getRegister(type, address) {
+        const map = this.registerMaps[type];
+        if (map && map.has(address)) {
+            return map.get(address);
+        }
+        return null;
+    }
+
+    /**
+     * Process incoming Modbus RTU frame and generate response
+     */
+    processRequest(frame) {
+        // Validate minimum frame length
+        if (frame.length < 4) {
+            return null; // Invalid frame, ignore
+        }
+
+        // Validate CRC
+        if (!ModbusMaster.validateCRC(frame)) {
+            return null; // Bad CRC, ignore
+        }
+
+        const slaveId = frame[0];
+        const functionCode = frame[1];
+
+        // Check if request is for this slave
+        if (slaveId !== this.slaveId && slaveId !== 0) {
+            return null; // Not for us (0 = broadcast, handle writes only)
+        }
+
+        // Log the request
+        if (this.onRequest) {
+            this.onRequest(frame);
+        }
+
+        let response;
+
+        try {
+            switch (functionCode) {
+                case FUNCTION_CODES.READ_COILS:
+                    response = this.handleReadCoils(frame);
+                    break;
+                case FUNCTION_CODES.READ_DISCRETE_INPUTS:
+                    response = this.handleReadDiscreteInputs(frame);
+                    break;
+                case FUNCTION_CODES.READ_HOLDING_REGISTERS:
+                    response = this.handleReadHoldingRegisters(frame);
+                    break;
+                case FUNCTION_CODES.READ_INPUT_REGISTERS:
+                    response = this.handleReadInputRegisters(frame);
+                    break;
+                case FUNCTION_CODES.WRITE_SINGLE_COIL:
+                    response = this.handleWriteSingleCoil(frame);
+                    break;
+                case FUNCTION_CODES.WRITE_SINGLE_REGISTER:
+                    response = this.handleWriteSingleRegister(frame);
+                    break;
+                case FUNCTION_CODES.WRITE_MULTIPLE_COILS:
+                    response = this.handleWriteMultipleCoils(frame);
+                    break;
+                case FUNCTION_CODES.WRITE_MULTIPLE_REGISTERS:
+                    response = this.handleWriteMultipleRegisters(frame);
+                    break;
+                default:
+                    response = this.buildExceptionResponse(functionCode, 0x01); // Illegal Function
+            }
+        } catch (error) {
+            response = this.buildExceptionResponse(functionCode, 0x04); // Slave Device Failure
+        }
+
+        // Don't respond to broadcast writes
+        if (slaveId === 0) {
+            return null;
+        }
+
+        // Log the response
+        if (this.onResponse) {
+            this.onResponse(response);
+        }
+
+        return response;
+    }
+
+    /**
+     * FC 01 - Read Coils
+     */
+    handleReadCoils(frame) {
+        const startAddress = (frame[2] << 8) | frame[3];
+        const quantity = (frame[4] << 8) | frame[5];
+
+        // Validate quantity
+        if (quantity < 1 || quantity > MAX_COILS_PER_READ) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_COILS, 0x03);
+        }
+
+        // Check for forced exception
+        if (this.forcedExceptions.has(`coils:${startAddress}`)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_COILS,
+                this.forcedExceptions.get(`coils:${startAddress}`));
+        }
+
+        // Read coil values
+        const values = [];
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            if (!this.registerMaps.coils.has(addr)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.READ_COILS, 0x02); // Illegal Data Address
+            }
+            values.push(this.registerMaps.coils.get(addr) ? 1 : 0);
+            this.updateAccessStats('coils', addr, 'read');
+        }
+
+        // Trigger callback
+        if (this.onRegisterRead) {
+            this.onRegisterRead('coils', startAddress, quantity);
+        }
+
+        // Build response
+        const byteCount = Math.ceil(quantity / 8);
+        const data = new Uint8Array(byteCount);
+
+        for (let i = 0; i < quantity; i++) {
+            if (values[i]) {
+                data[Math.floor(i / 8)] |= (1 << (i % 8));
+            }
+        }
+
+        return this.buildReadResponse(FUNCTION_CODES.READ_COILS, data);
+    }
+
+    /**
+     * FC 02 - Read Discrete Inputs
+     */
+    handleReadDiscreteInputs(frame) {
+        const startAddress = (frame[2] << 8) | frame[3];
+        const quantity = (frame[4] << 8) | frame[5];
+
+        if (quantity < 1 || quantity > MAX_COILS_PER_READ) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_DISCRETE_INPUTS, 0x03);
+        }
+
+        if (this.forcedExceptions.has(`discreteInputs:${startAddress}`)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_DISCRETE_INPUTS,
+                this.forcedExceptions.get(`discreteInputs:${startAddress}`));
+        }
+
+        const values = [];
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            if (!this.registerMaps.discreteInputs.has(addr)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.READ_DISCRETE_INPUTS, 0x02);
+            }
+            values.push(this.registerMaps.discreteInputs.get(addr) ? 1 : 0);
+            this.updateAccessStats('discreteInputs', addr, 'read');
+        }
+
+        if (this.onRegisterRead) {
+            this.onRegisterRead('discreteInputs', startAddress, quantity);
+        }
+
+        const byteCount = Math.ceil(quantity / 8);
+        const data = new Uint8Array(byteCount);
+
+        for (let i = 0; i < quantity; i++) {
+            if (values[i]) {
+                data[Math.floor(i / 8)] |= (1 << (i % 8));
+            }
+        }
+
+        return this.buildReadResponse(FUNCTION_CODES.READ_DISCRETE_INPUTS, data);
+    }
+
+    /**
+     * FC 03 - Read Holding Registers
+     */
+    handleReadHoldingRegisters(frame) {
+        const startAddress = (frame[2] << 8) | frame[3];
+        const quantity = (frame[4] << 8) | frame[5];
+
+        if (quantity < 1 || quantity > MAX_REGISTERS_PER_READ) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_HOLDING_REGISTERS, 0x03);
+        }
+
+        if (this.forcedExceptions.has(`holdingRegisters:${startAddress}`)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_HOLDING_REGISTERS,
+                this.forcedExceptions.get(`holdingRegisters:${startAddress}`));
+        }
+
+        const data = new Uint8Array(quantity * 2);
+
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            if (!this.registerMaps.holdingRegisters.has(addr)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.READ_HOLDING_REGISTERS, 0x02);
+            }
+
+            let value = this.registerMaps.holdingRegisters.get(addr);
+
+            // Handle simulation modes
+            if (this.randomValues) {
+                value = Math.floor(Math.random() * 65536);
+                this.registerMaps.holdingRegisters.set(addr, value);
+            } else if (this.autoIncrement) {
+                value = (value + 1) & 0xFFFF;
+                this.registerMaps.holdingRegisters.set(addr, value);
+            }
+
+            data[i * 2] = (value >> 8) & 0xFF;
+            data[i * 2 + 1] = value & 0xFF;
+
+            this.updateAccessStats('holdingRegisters', addr, 'read');
+        }
+
+        if (this.onRegisterRead) {
+            this.onRegisterRead('holdingRegisters', startAddress, quantity);
+        }
+
+        return this.buildReadResponse(FUNCTION_CODES.READ_HOLDING_REGISTERS, data);
+    }
+
+    /**
+     * FC 04 - Read Input Registers
+     */
+    handleReadInputRegisters(frame) {
+        const startAddress = (frame[2] << 8) | frame[3];
+        const quantity = (frame[4] << 8) | frame[5];
+
+        if (quantity < 1 || quantity > MAX_REGISTERS_PER_READ) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_INPUT_REGISTERS, 0x03);
+        }
+
+        if (this.forcedExceptions.has(`inputRegisters:${startAddress}`)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.READ_INPUT_REGISTERS,
+                this.forcedExceptions.get(`inputRegisters:${startAddress}`));
+        }
+
+        const data = new Uint8Array(quantity * 2);
+
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            if (!this.registerMaps.inputRegisters.has(addr)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.READ_INPUT_REGISTERS, 0x02);
+            }
+
+            let value = this.registerMaps.inputRegisters.get(addr);
+
+            if (this.randomValues) {
+                value = Math.floor(Math.random() * 65536);
+                this.registerMaps.inputRegisters.set(addr, value);
+            } else if (this.autoIncrement) {
+                value = (value + 1) & 0xFFFF;
+                this.registerMaps.inputRegisters.set(addr, value);
+            }
+
+            data[i * 2] = (value >> 8) & 0xFF;
+            data[i * 2 + 1] = value & 0xFF;
+
+            this.updateAccessStats('inputRegisters', addr, 'read');
+        }
+
+        if (this.onRegisterRead) {
+            this.onRegisterRead('inputRegisters', startAddress, quantity);
+        }
+
+        return this.buildReadResponse(FUNCTION_CODES.READ_INPUT_REGISTERS, data);
+    }
+
+    /**
+     * FC 05 - Write Single Coil
+     */
+    handleWriteSingleCoil(frame) {
+        const address = (frame[2] << 8) | frame[3];
+        const value = (frame[4] << 8) | frame[5];
+
+        // Value must be 0x0000 (OFF) or 0xFF00 (ON)
+        if (value !== 0x0000 && value !== 0xFF00) {
+            return this.buildExceptionResponse(FUNCTION_CODES.WRITE_SINGLE_COIL, 0x03);
+        }
+
+        if (!this.registerMaps.coils.has(address)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.WRITE_SINGLE_COIL, 0x02);
+        }
+
+        if (this.forcedExceptions.has(`coils:${address}`)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.WRITE_SINGLE_COIL,
+                this.forcedExceptions.get(`coils:${address}`));
+        }
+
+        this.registerMaps.coils.set(address, value === 0xFF00 ? 1 : 0);
+        this.updateAccessStats('coils', address, 'write');
+
+        if (this.onRegisterWrite) {
+            this.onRegisterWrite('coils', address, 1);
+        }
+
+        // Echo the request as response (without CRC, will be added)
+        return ModbusMaster.appendCRC(frame.slice(0, 6));
+    }
+
+    /**
+     * FC 06 - Write Single Register
+     */
+    handleWriteSingleRegister(frame) {
+        const address = (frame[2] << 8) | frame[3];
+        const value = (frame[4] << 8) | frame[5];
+
+        if (!this.registerMaps.holdingRegisters.has(address)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.WRITE_SINGLE_REGISTER, 0x02);
+        }
+
+        if (this.forcedExceptions.has(`holdingRegisters:${address}`)) {
+            return this.buildExceptionResponse(FUNCTION_CODES.WRITE_SINGLE_REGISTER,
+                this.forcedExceptions.get(`holdingRegisters:${address}`));
+        }
+
+        this.registerMaps.holdingRegisters.set(address, value);
+        this.updateAccessStats('holdingRegisters', address, 'write');
+
+        if (this.onRegisterWrite) {
+            this.onRegisterWrite('holdingRegisters', address, 1);
+        }
+
+        return ModbusMaster.appendCRC(frame.slice(0, 6));
+    }
+
+    /**
+     * FC 0F - Write Multiple Coils
+     */
+    handleWriteMultipleCoils(frame) {
+        const startAddress = (frame[2] << 8) | frame[3];
+        const quantity = (frame[4] << 8) | frame[5];
+        const byteCount = frame[6];
+
+        if (quantity < 1 || quantity > 1968) {
+            return this.buildExceptionResponse(FUNCTION_CODES.WRITE_MULTIPLE_COILS, 0x03);
+        }
+
+        // Verify all addresses exist
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            if (!this.registerMaps.coils.has(addr)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.WRITE_MULTIPLE_COILS, 0x02);
+            }
+            if (this.forcedExceptions.has(`coils:${addr}`)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.WRITE_MULTIPLE_COILS,
+                    this.forcedExceptions.get(`coils:${addr}`));
+            }
+        }
+
+        // Write coils
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            const byteIndex = Math.floor(i / 8);
+            const bitIndex = i % 8;
+            const value = (frame[7 + byteIndex] >> bitIndex) & 1;
+
+            this.registerMaps.coils.set(addr, value);
+            this.updateAccessStats('coils', addr, 'write');
+        }
+
+        if (this.onRegisterWrite) {
+            this.onRegisterWrite('coils', startAddress, quantity);
+        }
+
+        // Response: slave ID, FC, start address, quantity
+        const response = new Uint8Array([
+            this.slaveId,
+            FUNCTION_CODES.WRITE_MULTIPLE_COILS,
+            (startAddress >> 8) & 0xFF,
+            startAddress & 0xFF,
+            (quantity >> 8) & 0xFF,
+            quantity & 0xFF
+        ]);
+
+        return ModbusMaster.appendCRC(response);
+    }
+
+    /**
+     * FC 10 - Write Multiple Registers
+     */
+    handleWriteMultipleRegisters(frame) {
+        const startAddress = (frame[2] << 8) | frame[3];
+        const quantity = (frame[4] << 8) | frame[5];
+        const byteCount = frame[6];
+
+        if (quantity < 1 || quantity > 123) {
+            return this.buildExceptionResponse(FUNCTION_CODES.WRITE_MULTIPLE_REGISTERS, 0x03);
+        }
+
+        // Verify all addresses exist
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            if (!this.registerMaps.holdingRegisters.has(addr)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.WRITE_MULTIPLE_REGISTERS, 0x02);
+            }
+            if (this.forcedExceptions.has(`holdingRegisters:${addr}`)) {
+                return this.buildExceptionResponse(FUNCTION_CODES.WRITE_MULTIPLE_REGISTERS,
+                    this.forcedExceptions.get(`holdingRegisters:${addr}`));
+            }
+        }
+
+        // Write registers
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            const value = (frame[7 + i * 2] << 8) | frame[8 + i * 2];
+
+            this.registerMaps.holdingRegisters.set(addr, value);
+            this.updateAccessStats('holdingRegisters', addr, 'write');
+        }
+
+        if (this.onRegisterWrite) {
+            this.onRegisterWrite('holdingRegisters', startAddress, quantity);
+        }
+
+        // Response: slave ID, FC, start address, quantity
+        const response = new Uint8Array([
+            this.slaveId,
+            FUNCTION_CODES.WRITE_MULTIPLE_REGISTERS,
+            (startAddress >> 8) & 0xFF,
+            startAddress & 0xFF,
+            (quantity >> 8) & 0xFF,
+            quantity & 0xFF
+        ]);
+
+        return ModbusMaster.appendCRC(response);
+    }
+
+    /**
+     * Build a read response frame
+     */
+    buildReadResponse(functionCode, data) {
+        const frame = new Uint8Array(3 + data.length);
+        frame[0] = this.slaveId;
+        frame[1] = functionCode;
+        frame[2] = data.length;
+        frame.set(data, 3);
+
+        return ModbusMaster.appendCRC(frame);
+    }
+
+    /**
+     * Build an exception response frame
+     */
+    buildExceptionResponse(functionCode, exceptionCode) {
+        const frame = new Uint8Array([
+            this.slaveId,
+            functionCode | 0x80,
+            exceptionCode
+        ]);
+
+        return ModbusMaster.appendCRC(frame);
+    }
+
+    /**
+     * Update access statistics for a register
+     */
+    updateAccessStats(type, address, accessType) {
+        const statsMap = this.accessStats[type];
+        if (statsMap && statsMap.has(address)) {
+            const stats = statsMap.get(address);
+            if (accessType === 'read') {
+                stats.readCount++;
+            } else {
+                stats.writeCount++;
+            }
+            stats.lastAccess = new Date();
+        }
+    }
+
+    /**
+     * Get access statistics for display
+     */
+    getAccessStats(type) {
+        const result = [];
+        const statsMap = this.accessStats[type];
+        const regMap = this.registerMaps[type];
+
+        if (!statsMap || !regMap) return result;
+
+        for (const [address, stats] of statsMap) {
+            result.push({
+                address,
+                value: regMap.get(address),
+                readCount: stats.readCount,
+                writeCount: stats.writeCount,
+                lastAccess: stats.lastAccess
+            });
+        }
+
+        return result.sort((a, b) => a.address - b.address);
+    }
+
+    /**
+     * Get total statistics
+     */
+    getTotalStats() {
+        let totalReads = 0;
+        let totalWrites = 0;
+
+        for (const type of Object.keys(this.accessStats)) {
+            for (const stats of this.accessStats[type].values()) {
+                totalReads += stats.readCount;
+                totalWrites += stats.writeCount;
+            }
+        }
+
+        return { totalReads, totalWrites };
+    }
+
+    /**
+     * Reset all statistics
+     */
+    resetStats() {
+        for (const type of Object.keys(this.accessStats)) {
+            for (const stats of this.accessStats[type].values()) {
+                stats.readCount = 0;
+                stats.writeCount = 0;
+                stats.lastAccess = null;
+            }
+        }
+    }
+
+    /**
+     * Export configuration as JSON
+     */
+    exportConfig() {
+        const config = {
+            slaveId: this.slaveId,
+            responseDelay: this.responseDelay,
+            autoIncrement: this.autoIncrement,
+            randomValues: this.randomValues,
+            registerMaps: {}
+        };
+
+        for (const type of Object.keys(this.registerMaps)) {
+            config.registerMaps[type] = Array.from(this.registerMaps[type].entries());
+        }
+
+        return config;
+    }
+
+    /**
+     * Import configuration from JSON
+     */
+    importConfig(config) {
+        this.slaveId = config.slaveId || 1;
+        this.responseDelay = config.responseDelay || 0;
+        this.autoIncrement = config.autoIncrement || false;
+        this.randomValues = config.randomValues || false;
+
+        // Clear and restore register maps
+        for (const type of Object.keys(this.registerMaps)) {
+            this.registerMaps[type].clear();
+            this.accessStats[type].clear();
+
+            if (config.registerMaps && config.registerMaps[type]) {
+                for (const [address, value] of config.registerMaps[type]) {
+                    this.registerMaps[type].set(address, value);
+                    this.accessStats[type].set(address, { readCount: 0, writeCount: 0, lastAccess: null });
+                }
+            }
+        }
+    }
+}
+
+// ============================================
 // Value Interpreter
 // ============================================
 class ValueInterpreter {
@@ -1508,104 +2178,137 @@ class UIManager {
         container.innerHTML = '';
         if (hideComments) container.classList.add('hide-comments');
 
-        // Split registers into columns of ROWS_PER_COLUMN each
-        const numColumns = Math.ceil(registers.length / ROWS_PER_COLUMN);
+        // Group registers by type
+        const registersByType = {};
+        const typeOrder = ['0x', '1x', '3x', '4x']; // Define display order
 
-        for (let col = 0; col < numColumns; col++) {
-            const startIdx = col * ROWS_PER_COLUMN;
-            const columnRegs = registers.slice(startIdx, startIdx + ROWS_PER_COLUMN);
+        for (const reg of registers) {
+            if (!registersByType[reg.type]) {
+                registersByType[reg.type] = [];
+            }
+            registersByType[reg.type].push(reg);
+        }
 
-            const columnDiv = document.createElement('div');
-            columnDiv.className = 'register-column';
+        // Create sections for each register type
+        for (const type of typeOrder) {
+            if (!registersByType[type] || registersByType[type].length === 0) continue;
 
-            const table = document.createElement('table');
-            table.className = 'register-table';
+            const typeRegs = registersByType[type];
+            const typeInfo = REGISTER_TYPES[type];
 
-            // Header
-            const thead = document.createElement('thead');
-            thead.innerHTML = `
-                <tr>
-                    <th class="register-table__th register-table__th--type">Type</th>
-                    <th class="register-table__th register-table__th--address">Addr</th>
-                    <th class="register-table__th register-table__th--alias">Alias</th>
-                    <th class="register-table__th register-table__th--value">Value</th>
-                    <th class="register-table__th register-table__th--comment">Comment</th>
-                </tr>
-            `;
-            table.appendChild(thead);
+            // Create section for this type
+            const sectionDiv = document.createElement('div');
+            sectionDiv.className = 'register-section';
 
-            // Body
-            const tbody = document.createElement('tbody');
-            for (const reg of columnRegs) {
-                const typeInfo = REGISTER_TYPES[reg.type];
-                const isWritable = typeInfo && typeInfo.writeFC !== null;
-                const rowClass = isWritable ? '' : 'register-table__row--readonly';
+            // Section header
+            const sectionHeader = document.createElement('div');
+            sectionHeader.className = 'register-section__header';
+            sectionHeader.innerHTML = `<span class="register-section__type">${type}</span> <span class="register-section__name">${typeInfo ? typeInfo.name : ''}</span> <span class="register-section__count">(${typeRegs.length})</span>`;
+            sectionDiv.appendChild(sectionHeader);
 
-                const tr = document.createElement('tr');
-                tr.className = `register-table__row ${rowClass}`;
-                tr.dataset.registerId = reg.id;
-                tr.dataset.registerType = reg.type;
+            // Columns container for this section
+            const columnsDiv = document.createElement('div');
+            columnsDiv.className = 'register-section__columns';
 
-                tr.innerHTML = `
-                    <td class="register-table__cell register-table__cell--type">${reg.type}</td>
-                    <td class="register-table__cell register-table__cell--address">${ValueInterpreter.toHexString(reg.address)}</td>
-                    <td class="register-table__cell register-table__cell--alias">${reg.alias || '-'}</td>
-                    <td class="register-table__cell register-table__cell--value ${isWritable ? 'editable' : ''}">${reg.value}</td>
-                    <td class="register-table__cell register-table__cell--comment">${reg.comment || ''}</td>
+            // Split registers into columns of ROWS_PER_COLUMN each
+            const numColumns = Math.ceil(typeRegs.length / ROWS_PER_COLUMN);
+
+            for (let col = 0; col < numColumns; col++) {
+                const startIdx = col * ROWS_PER_COLUMN;
+                const columnRegs = typeRegs.slice(startIdx, startIdx + ROWS_PER_COLUMN);
+
+                const columnDiv = document.createElement('div');
+                columnDiv.className = 'register-column';
+
+                const table = document.createElement('table');
+                table.className = 'register-table';
+
+                // Header
+                const thead = document.createElement('thead');
+                thead.innerHTML = `
+                    <tr>
+                        <th class="register-table__th register-table__th--address">Addr</th>
+                        <th class="register-table__th register-table__th--alias">Alias</th>
+                        <th class="register-table__th register-table__th--value">Value</th>
+                        <th class="register-table__th register-table__th--comment">Comment</th>
+                    </tr>
                 `;
+                table.appendChild(thead);
 
-                // Row selection with Ctrl+click and Shift+click support
-                tr.addEventListener('click', (e) => {
-                    if (e.target.tagName === 'INPUT') return;
+                // Body
+                const tbody = document.createElement('tbody');
+                for (const reg of columnRegs) {
+                    const isWritable = typeInfo && typeInfo.writeFC !== null;
+                    const rowClass = isWritable ? '' : 'register-table__row--readonly';
 
-                    const allRows = Array.from(container.querySelectorAll('tr[data-register-id]'));
+                    const tr = document.createElement('tr');
+                    tr.className = `register-table__row ${rowClass}`;
+                    tr.dataset.registerId = reg.id;
+                    tr.dataset.registerType = reg.type;
 
-                    if (e.ctrlKey) {
-                        // Toggle selection
-                        tr.classList.toggle('selected');
-                        if (tr.classList.contains('selected')) {
-                            this.selectedRegisters.push(reg.id);
-                        } else {
-                            this.selectedRegisters = this.selectedRegisters.filter(id => id !== reg.id);
-                        }
-                    } else if (e.shiftKey && this.selectedRegisters.length > 0) {
-                        // Range selection
-                        const lastSelectedRow = container.querySelector(`tr[data-register-id="${this.selectedRegisters[this.selectedRegisters.length - 1]}"]`);
-                        const startIdx = allRows.indexOf(lastSelectedRow);
-                        const endIdx = allRows.indexOf(tr);
-                        const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+                    tr.innerHTML = `
+                        <td class="register-table__cell register-table__cell--address">${ValueInterpreter.toHexString(reg.address)}</td>
+                        <td class="register-table__cell register-table__cell--alias">${reg.alias || '-'}</td>
+                        <td class="register-table__cell register-table__cell--value ${isWritable ? 'editable' : ''}">${reg.value}</td>
+                        <td class="register-table__cell register-table__cell--comment">${reg.comment || ''}</td>
+                    `;
 
-                        for (let i = from; i <= to; i++) {
-                            allRows[i].classList.add('selected');
-                            const regId = allRows[i].dataset.registerId;
-                            if (!this.selectedRegisters.includes(regId)) {
-                                this.selectedRegisters.push(regId);
+                    // Row selection with Ctrl+click and Shift+click support
+                    tr.addEventListener('click', (e) => {
+                        if (e.target.tagName === 'INPUT') return;
+
+                        const allRows = Array.from(container.querySelectorAll('tr[data-register-id]'));
+
+                        if (e.ctrlKey) {
+                            // Toggle selection
+                            tr.classList.toggle('selected');
+                            if (tr.classList.contains('selected')) {
+                                this.selectedRegisters.push(reg.id);
+                            } else {
+                                this.selectedRegisters = this.selectedRegisters.filter(id => id !== reg.id);
                             }
+                        } else if (e.shiftKey && this.selectedRegisters.length > 0) {
+                            // Range selection
+                            const lastSelectedRow = container.querySelector(`tr[data-register-id="${this.selectedRegisters[this.selectedRegisters.length - 1]}"]`);
+                            const startIdx = allRows.indexOf(lastSelectedRow);
+                            const endIdx = allRows.indexOf(tr);
+                            const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+
+                            for (let i = from; i <= to; i++) {
+                                allRows[i].classList.add('selected');
+                                const regId = allRows[i].dataset.registerId;
+                                if (!this.selectedRegisters.includes(regId)) {
+                                    this.selectedRegisters.push(regId);
+                                }
+                            }
+                        } else {
+                            // Single selection - clear all and select this one
+                            container.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
+                            tr.classList.add('selected');
+                            this.selectedRegisters = [reg.id];
                         }
-                    } else {
-                        // Single selection - clear all and select this one
-                        container.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
-                        tr.classList.add('selected');
-                        this.selectedRegisters = [reg.id];
+
+                        this.updateValueEditor();
+                    });
+
+                    // Double click to edit (if writable)
+                    if (isWritable) {
+                        const valueCell = tr.querySelector('.register-table__cell--value');
+                        valueCell.addEventListener('dblclick', () => {
+                            this.startCellEdit(valueCell, reg);
+                        });
                     }
 
-                    this.updateValueEditor();
-                });
-
-                // Double click to edit (if writable)
-                if (isWritable) {
-                    const valueCell = tr.querySelector('.register-table__cell--value');
-                    valueCell.addEventListener('dblclick', () => {
-                        this.startCellEdit(valueCell, reg);
-                    });
+                    tbody.appendChild(tr);
                 }
 
-                tbody.appendChild(tr);
+                table.appendChild(tbody);
+                columnDiv.appendChild(table);
+                columnsDiv.appendChild(columnDiv);
             }
 
-            table.appendChild(tbody);
-            columnDiv.appendChild(table);
-            container.appendChild(columnDiv);
+            sectionDiv.appendChild(columnsDiv);
+            container.appendChild(sectionDiv);
         }
     }
 
@@ -1958,6 +2661,148 @@ class UIManager {
             status.querySelector('.polling-status__text').textContent = 'Not Polling';
         }
     }
+
+    // ===== Slave Mode UI =====
+    renderSlaveRegisterTable(type = null) {
+        const container = this.elements.registerColumns;
+        const selectedType = type || this.app.selectedRegisterMapType || 'holdingRegisters';
+
+        // Get registers for the selected type
+        const registers = this.app.modbusSlave.getAccessStats(selectedType);
+
+        if (registers.length === 0) {
+            container.innerHTML = `
+                <div class="register-table__empty-column">
+                    <p>No registers configured for this type.</p>
+                    <p>Click "Add Register Range" to add registers.</p>
+                </div>
+            `;
+            this.elements.registerTableEmpty.style.display = 'none';
+            return;
+        }
+
+        this.elements.registerTableEmpty.style.display = 'none';
+
+        // Determine if this is a bit type (coils/discrete inputs)
+        const isBitType = selectedType === 'coils' || selectedType === 'discreteInputs';
+
+        // Build table with columns (10 rows per column)
+        const rowsPerColumn = 10;
+        const numColumns = Math.ceil(registers.length / rowsPerColumn);
+
+        let html = '';
+
+        for (let col = 0; col < numColumns; col++) {
+            html += '<div class="register-table__column">';
+            html += '<table class="register-table">';
+            html += '<thead><tr>';
+            html += '<th>Address</th>';
+            html += '<th>Value</th>';
+            html += '<th>Reads</th>';
+            html += '<th>Writes</th>';
+            html += '<th>Last Access</th>';
+            html += '</tr></thead>';
+            html += '<tbody>';
+
+            const startIdx = col * rowsPerColumn;
+            const endIdx = Math.min(startIdx + rowsPerColumn, registers.length);
+
+            for (let i = startIdx; i < endIdx; i++) {
+                const reg = registers[i];
+                const lastAccess = reg.lastAccess ? this.formatTimeAgo(reg.lastAccess) : '-';
+
+                html += `<tr class="register-table__row" data-address="${reg.address}" data-type="${selectedType}">`;
+                html += `<td class="register-table__cell">${reg.address}</td>`;
+
+                if (isBitType) {
+                    html += `<td class="register-table__cell register-table__cell--value">
+                        <span class="register-value register-value--${reg.value ? 'on' : 'off'}">${reg.value ? 'ON' : 'OFF'}</span>
+                    </td>`;
+                } else {
+                    html += `<td class="register-table__cell register-table__cell--value">${reg.value}</td>`;
+                }
+
+                html += `<td class="register-table__cell register-table__cell--access-count">${reg.readCount}</td>`;
+                html += `<td class="register-table__cell register-table__cell--access-count">${reg.writeCount}</td>`;
+                html += `<td class="register-table__cell register-table__cell--last-access">${lastAccess}</td>`;
+                html += '</tr>';
+            }
+
+            html += '</tbody></table></div>';
+        }
+
+        container.innerHTML = html;
+
+        // Add click handlers for editing values
+        container.querySelectorAll('.register-table__row').forEach(row => {
+            row.addEventListener('dblclick', () => {
+                const address = parseInt(row.dataset.address);
+                const regType = row.dataset.type;
+                this.showSlaveRegisterEditDialog(regType, address);
+            });
+        });
+    }
+
+    formatTimeAgo(date) {
+        const seconds = Math.floor((new Date() - date) / 1000);
+        if (seconds < 5) return 'Just now';
+        if (seconds < 60) return `${seconds}s ago`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+        return `${Math.floor(seconds / 3600)}h ago`;
+    }
+
+    showSlaveRegisterEditDialog(type, address) {
+        const currentValue = this.app.modbusSlave.getRegister(type, address);
+        const isBitType = type === 'coils' || type === 'discreteInputs';
+
+        let newValue;
+        if (isBitType) {
+            // Toggle for bit types
+            newValue = currentValue ? 0 : 1;
+        } else {
+            // Prompt for register types
+            const input = prompt(`Enter new value for ${type} address ${address}:`, currentValue);
+            if (input === null) return;
+            newValue = parseInt(input);
+            if (isNaN(newValue) || newValue < 0 || newValue > 65535) {
+                this.showNotification('Invalid value. Must be 0-65535.', 'error');
+                return;
+            }
+        }
+
+        this.app.modbusSlave.setRegister(type, address, newValue);
+        this.renderSlaveRegisterTable(type);
+        this.showNotification(`Updated ${type} address ${address} to ${newValue}`, 'success');
+    }
+
+    flashRegisterAccess(type, startAddress, quantity, accessType) {
+        const container = this.elements.registerColumns;
+        const flashClass = accessType === 'read' ? 'register-table__row--read-flash' : 'register-table__row--write-flash';
+
+        for (let i = 0; i < quantity; i++) {
+            const addr = startAddress + i;
+            const row = container.querySelector(`[data-address="${addr}"][data-type="${type}"]`);
+            if (row) {
+                row.classList.remove('register-table__row--read-flash', 'register-table__row--write-flash');
+                // Force reflow
+                void row.offsetWidth;
+                row.classList.add(flashClass);
+
+                // Remove class after animation
+                setTimeout(() => {
+                    row.classList.remove(flashClass);
+                }, 500);
+            }
+        }
+    }
+
+    updateSlaveStats() {
+        const stats = this.app.modbusSlave.getTotalStats();
+        this.elements.statusMessages.textContent = stats.totalReads + stats.totalWrites;
+
+        // Update last access time
+        this.elements.statusLastPoll.textContent = 'Just now';
+    }
 }
 
 // ============================================
@@ -1968,11 +2813,15 @@ class ModbusEmulator {
         this.store = new Store();
         this.serialManager = new SerialManager();
         this.trafficLogger = new TrafficLogger();
+        this.modbusSlave = new ModbusSlave();
         this.ui = null;
         this.currentConnection = null;
         this.currentSlave = null;
         this.errorCount = 0;
         this.messageCount = 0;
+        this.currentMode = 'master'; // 'master' or 'slave'
+        this.slaveServerRunning = false;
+        this.slaveReadLoop = null;
 
         this.init();
     }
@@ -2184,6 +3033,41 @@ class ModbusEmulator {
         document.getElementById('btnUpdateSlave').addEventListener('click', () => this.handleUpdateSlave());
         document.getElementById('btnUpdateGroup').addEventListener('click', () => this.handleUpdateGroup());
         document.getElementById('btnUpdateConnection').addEventListener('click', () => this.handleUpdateConnection());
+
+        // Mode toggle
+        document.getElementById('btnModeMaster').addEventListener('click', () => this.switchMode('master'));
+        document.getElementById('btnModeSlave').addEventListener('click', () => this.switchMode('slave'));
+
+        // Slave mode controls
+        document.getElementById('btnConfigureSlave').addEventListener('click', () => this.showSlaveConfigModal());
+        document.getElementById('btnStartSlaveServer').addEventListener('click', () => this.startSlaveServer());
+        document.getElementById('btnStopSlaveServer').addEventListener('click', () => this.stopSlaveServer());
+        document.getElementById('btnSaveSlaveConfig').addEventListener('click', () => this.saveSlaveConfig());
+        document.getElementById('btnAddRegisterMap').addEventListener('click', () => this.showAddRegisterMapModal());
+        document.getElementById('btnConfirmAddRegisterMap').addEventListener('click', () => this.handleAddRegisterMap());
+
+        // Register map tree clicks
+        document.getElementById('registerMapTree').addEventListener('click', (e) => {
+            const item = e.target.closest('.register-map-tree__item');
+            if (item) {
+                this.selectRegisterMapType(item.dataset.type);
+            }
+        });
+
+        // Set up slave callbacks
+        this.modbusSlave.onRegisterRead = (type, address, quantity) => {
+            this.ui.flashRegisterAccess(type, address, quantity, 'read');
+        };
+        this.modbusSlave.onRegisterWrite = (type, address, quantity) => {
+            this.ui.flashRegisterAccess(type, address, quantity, 'write');
+            this.ui.renderSlaveRegisterTable();
+        };
+        this.modbusSlave.onRequest = (frame) => {
+            this.trafficLogger.logRx(frame);
+        };
+        this.modbusSlave.onResponse = (frame) => {
+            this.trafficLogger.logTx(frame);
+        };
 
         // Function tabs
         elements.functionTabs.querySelectorAll('.function-tab').forEach(tab => {
@@ -2946,6 +3830,308 @@ class ModbusEmulator {
     toggleTrafficLog() {
         const log = this.ui.elements.trafficLog;
         log.style.display = log.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    // ===== Slave Mode Methods =====
+    switchMode(mode) {
+        if (this.currentMode === mode) return;
+
+        // Stop any running operations
+        if (this.currentMode === 'master') {
+            // Stop all polling
+            for (const group of this.store.registerGroups) {
+                if (group.autoPolling) {
+                    this.store.stopPolling(group.id);
+                }
+            }
+        } else if (this.currentMode === 'slave') {
+            // Stop slave server
+            if (this.slaveServerRunning) {
+                this.stopSlaveServer();
+            }
+        }
+
+        this.currentMode = mode;
+
+        // Update UI
+        document.getElementById('btnModeMaster').classList.toggle('mode-toggle__btn--active', mode === 'master');
+        document.getElementById('btnModeSlave').classList.toggle('mode-toggle__btn--active', mode === 'slave');
+
+        document.getElementById('masterModeControls').style.display = mode === 'master' ? 'flex' : 'none';
+        document.getElementById('slaveModeControls').style.display = mode === 'slave' ? 'flex' : 'none';
+
+        document.getElementById('sidebarMasterContent').style.display = mode === 'master' ? 'block' : 'none';
+        document.getElementById('sidebarSlaveContent').style.display = mode === 'slave' ? 'block' : 'none';
+
+        document.getElementById('serverStatus').style.display = mode === 'slave' ? 'flex' : 'none';
+
+        // Update action bar for slave mode
+        const actionBar = document.querySelector('.action-bar__left');
+        if (mode === 'slave') {
+            actionBar.style.display = 'none';
+        } else {
+            actionBar.style.display = 'flex';
+        }
+
+        // Update register table
+        if (mode === 'slave') {
+            this.ui.renderSlaveRegisterTable();
+            this.updateSlaveRegisterCounts();
+        } else {
+            if (this.ui.selectedTreeItem && this.ui.selectedTreeItem.type === 'group') {
+                this.ui.renderRegisterTable(this.ui.selectedTreeItem.id);
+            }
+        }
+
+        this.ui.showNotification(`Switched to ${mode === 'master' ? 'Master' : 'Slave'} mode`, 'info');
+    }
+
+    showSlaveConfigModal() {
+        const modal = document.getElementById('modalSlaveConfig');
+
+        // Populate current values
+        document.getElementById('modalSlaveConfigId').value = this.modbusSlave.slaveId;
+        document.getElementById('modalSlaveResponseDelay').value = this.modbusSlave.responseDelay;
+        document.getElementById('modalSlaveAutoIncrement').checked = this.modbusSlave.autoIncrement;
+        document.getElementById('modalSlaveRandomValues').checked = this.modbusSlave.randomValues;
+
+        // Get current serial settings if connected
+        if (this.serialManager.port) {
+            // Use defaults for now
+        }
+
+        modal.classList.add('modal--active');
+    }
+
+    saveSlaveConfig() {
+        const slaveId = parseInt(document.getElementById('modalSlaveConfigId').value);
+        const responseDelay = parseInt(document.getElementById('modalSlaveResponseDelay').value);
+        const baudRate = parseInt(document.getElementById('modalSlaveBaudRate').value);
+        const parity = document.getElementById('modalSlaveParity').value;
+        const autoIncrement = document.getElementById('modalSlaveAutoIncrement').checked;
+        const randomValues = document.getElementById('modalSlaveRandomValues').checked;
+
+        if (slaveId < 1 || slaveId > 247) {
+            this.ui.showNotification('Slave ID must be between 1 and 247', 'error');
+            return;
+        }
+
+        this.modbusSlave.configure({
+            slaveId,
+            responseDelay,
+            autoIncrement,
+            randomValues
+        });
+
+        // Store serial settings for when we start the server
+        this.slaveSerialConfig = { baudRate, parity };
+
+        // Update UI
+        document.getElementById('slaveIdValue').textContent = slaveId;
+
+        this.ui.hideAllModals();
+        this.ui.showNotification('Slave configuration saved', 'success');
+    }
+
+    showAddRegisterMapModal() {
+        const modal = document.getElementById('modalAddRegisterMap');
+
+        // Reset form
+        document.getElementById('modalMapRegisterType').value = 'holdingRegisters';
+        document.getElementById('modalMapStartAddress').value = '0';
+        document.getElementById('modalMapQuantity').value = '10';
+        document.getElementById('modalMapInitialValue').value = '0';
+        document.getElementById('modalMapForceException').checked = false;
+
+        modal.classList.add('modal--active');
+    }
+
+    handleAddRegisterMap() {
+        const type = document.getElementById('modalMapRegisterType').value;
+        const startAddress = parseInt(document.getElementById('modalMapStartAddress').value);
+        const quantity = parseInt(document.getElementById('modalMapQuantity').value);
+        const initialValue = parseInt(document.getElementById('modalMapInitialValue').value);
+        const forceException = document.getElementById('modalMapForceException').checked;
+
+        if (isNaN(startAddress) || startAddress < 0) {
+            this.ui.showNotification('Invalid start address', 'error');
+            return;
+        }
+
+        if (isNaN(quantity) || quantity < 1) {
+            this.ui.showNotification('Invalid quantity', 'error');
+            return;
+        }
+
+        // Add registers
+        this.modbusSlave.addRegisterRange(type, startAddress, quantity, initialValue);
+
+        // Set forced exception if requested
+        if (forceException) {
+            this.modbusSlave.forcedExceptions.set(`${type}:${startAddress}`, 0x02);
+        }
+
+        this.ui.hideAllModals();
+        this.updateSlaveRegisterCounts();
+        this.ui.renderSlaveRegisterTable();
+        this.ui.showNotification(`Added ${quantity} ${type} starting at address ${startAddress}`, 'success');
+    }
+
+    selectRegisterMapType(type) {
+        // Update selection in sidebar
+        document.querySelectorAll('.register-map-tree__item').forEach(item => {
+            item.classList.toggle('register-map-tree__item--selected', item.dataset.type === type);
+        });
+
+        this.selectedRegisterMapType = type;
+        this.ui.renderSlaveRegisterTable(type);
+    }
+
+    updateSlaveRegisterCounts() {
+        document.getElementById('coilCount').textContent = this.modbusSlave.registerMaps.coils.size;
+        document.getElementById('discreteInputCount').textContent = this.modbusSlave.registerMaps.discreteInputs.size;
+        document.getElementById('inputRegisterCount').textContent = this.modbusSlave.registerMaps.inputRegisters.size;
+        document.getElementById('holdingRegisterCount').textContent = this.modbusSlave.registerMaps.holdingRegisters.size;
+    }
+
+    async startSlaveServer() {
+        if (this.slaveServerRunning) return;
+
+        try {
+            // Request port if not already connected
+            if (!this.serialManager.port) {
+                const config = this.slaveSerialConfig || { baudRate: 9600, parity: 'none' };
+                await this.serialManager.requestPort();
+                await this.serialManager.connect({
+                    baudRate: config.baudRate,
+                    dataBits: 8,
+                    stopBits: 1,
+                    parity: config.parity
+                });
+            }
+
+            this.slaveServerRunning = true;
+
+            // Update UI
+            document.getElementById('btnStartSlaveServer').style.display = 'none';
+            document.getElementById('btnStopSlaveServer').style.display = 'inline-flex';
+
+            const serverStatus = document.getElementById('serverStatus');
+            serverStatus.className = 'server-status server-status--listening';
+            serverStatus.querySelector('.server-status__text').textContent = 'Listening...';
+
+            // Start listening for requests
+            this.startSlaveListening();
+
+            this.ui.showNotification('Slave server started - listening for requests', 'success');
+
+        } catch (error) {
+            this.trafficLogger.logError(`Failed to start slave server: ${error.message}`);
+            this.ui.showNotification(`Failed to start: ${error.message}`, 'error');
+        }
+    }
+
+    async stopSlaveServer() {
+        if (!this.slaveServerRunning) return;
+
+        this.slaveServerRunning = false;
+
+        // Update UI
+        document.getElementById('btnStartSlaveServer').style.display = 'inline-flex';
+        document.getElementById('btnStopSlaveServer').style.display = 'none';
+
+        const serverStatus = document.getElementById('serverStatus');
+        serverStatus.className = 'server-status server-status--stopped';
+        serverStatus.querySelector('.server-status__text').textContent = 'Server Stopped';
+
+        // Disconnect serial
+        await this.serialManager.disconnect();
+
+        this.ui.showNotification('Slave server stopped', 'info');
+    }
+
+    async startSlaveListening() {
+        const buffer = [];
+        let lastByteTime = 0;
+        const interFrameDelay = 5; // ms - time to consider frame complete
+
+        while (this.slaveServerRunning && this.serialManager.port) {
+            try {
+                const data = await this.serialManager.read();
+
+                if (data && data.length > 0) {
+                    const now = Date.now();
+
+                    // If too much time passed, start new frame
+                    if (buffer.length > 0 && (now - lastByteTime) > interFrameDelay) {
+                        // Process previous frame
+                        await this.processSlaveFrame(new Uint8Array(buffer));
+                        buffer.length = 0;
+                    }
+
+                    // Add new data to buffer
+                    for (const byte of data) {
+                        buffer.push(byte);
+                    }
+                    lastByteTime = now;
+
+                    // Check if we have a complete frame (minimum 4 bytes with CRC)
+                    if (buffer.length >= 4) {
+                        // Try to process - if valid, clear buffer
+                        const frame = new Uint8Array(buffer);
+                        if (ModbusMaster.validateCRC(frame)) {
+                            await this.processSlaveFrame(frame);
+                            buffer.length = 0;
+                        }
+                    }
+                }
+
+                // Small delay to prevent tight loop
+                await new Promise(resolve => setTimeout(resolve, 1));
+
+            } catch (error) {
+                if (this.slaveServerRunning) {
+                    this.trafficLogger.logError(`Slave read error: ${error.message}`);
+                }
+                break;
+            }
+        }
+    }
+
+    async processSlaveFrame(frame) {
+        // Process the request
+        const response = this.modbusSlave.processRequest(frame);
+
+        if (response) {
+            // Apply response delay if configured
+            if (this.modbusSlave.responseDelay > 0) {
+                await new Promise(resolve => setTimeout(resolve, this.modbusSlave.responseDelay));
+            }
+
+            // Send response
+            try {
+                await this.serialManager.write(response);
+
+                // Update server status to show activity
+                const serverStatus = document.getElementById('serverStatus');
+                serverStatus.className = 'server-status server-status--running';
+                serverStatus.querySelector('.server-status__text').textContent = 'Active';
+
+                // Reset to listening after a moment
+                setTimeout(() => {
+                    if (this.slaveServerRunning) {
+                        serverStatus.className = 'server-status server-status--listening';
+                        serverStatus.querySelector('.server-status__text').textContent = 'Listening...';
+                    }
+                }, 500);
+
+            } catch (error) {
+                this.trafficLogger.logError(`Failed to send response: ${error.message}`);
+            }
+        }
+
+        // Update statistics display
+        this.ui.updateSlaveStats();
     }
 }
 
